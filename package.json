@@ -1,0 +1,16 @@
+{
+  "name": "delta-stablehacks",
+  "private": true,
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "dev:frontend": "pnpm --filter frontend dev",
+    "dev:backend": "pnpm --filter backend dev",
+    "test:programs": "pnpm --filter programs test",
+    "build:programs": "pnpm --filter programs build"
+  },
+  "engines": {
+    "node": ">=18",
+    "pnpm": ">=9"
+  }
+}
