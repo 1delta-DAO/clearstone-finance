@@ -15,6 +15,7 @@
     "@solana/web3.js": "^1.98.0"
   },
   "devDependencies": {
+    "@kamino-finance/klend-sdk": "^7.3.20",
     "@solana/spl-token": "^0.4.14",
     "@types/bn.js": "^5.1.0",
     "@types/mocha": "^10.0.0",
