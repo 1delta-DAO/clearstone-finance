@@ -35,9 +35,10 @@ Anchor program on Solana that manages KYC-gated token issuance.
 | Instruction | Description |
 |---|---|
 | `initialize_mint` | Creates a Token-2022 mint with **confidential transfer extension**. Mint authority is a program PDA. |
-| `add_to_whitelist` | Authority adds a wallet to the KYC whitelist (creates a PDA). |
+| `add_to_whitelist` | Authority adds a wallet to the KYC whitelist with `Holder` role (can mint + hold). |
+| `add_liquidator` | Authority adds a wallet with `Liquidator` role (can receive collateral, cannot mint). |
 | `remove_from_whitelist` | Authority removes a wallet, closing the PDA and returning rent. |
-| `mint_to` | Mints tokens to a whitelisted recipient. Fails if not on whitelist. |
+| `mint_to` | Mints tokens to a whitelisted `Holder`. Rejects `Liquidator` role. |
 
 **Key accounts (PDAs):**
 
@@ -164,9 +165,57 @@ Interest Rate Curve:
 
 ---
 
-## Liquidations
+## Liquidations — Whitelisted Approach
 
-Kamino V2 handles liquidations natively — **no custom liquidation logic needed**:
+Kamino V2 liquidations are **permissionless by default** — any wallet can call `liquidateObligationAndRedeemReserveCollateral`. But since dUSDY is KYC-gated, an un-whitelisted liquidator **cannot receive the collateral**. We solve this with a hybrid approach.
+
+### The Problem
+
+```
+Liquidator repays borrower's USDC debt
+         │
+         ▼
+Liquidator receives dUSDY collateral (+ bonus)
+         │
+         ▼
+❌ Liquidator is not KYC'd → cannot hold dUSDY
+```
+
+### Solution: Hybrid Whitelisted Liquidators + Auto-Deleverage
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                  Liquidation Strategy                     │
+│                                                          │
+│  Fast path (minutes):                                    │
+│  ┌──────────────────────────────────────────────┐       │
+│  │ Pre-approved KYC'd liquidator bots            │       │
+│  │ • Whitelisted via add_liquidator()            │       │
+│  │ • Role = Liquidator (cannot mint, only receive)│      │
+│  │ • Act immediately when positions go underwater │       │
+│  └──────────────────────────────────────────────┘       │
+│                                                          │
+│  Backstop (72hr margin call):                            │
+│  ┌──────────────────────────────────────────────┐       │
+│  │ Kamino Auto-Deleverage                        │       │
+│  │ • Triggered by Risk Council via multisig       │       │
+│  │ • Sells collateral on open market              │       │
+│  │ • No third party receives dUSDY directly       │       │
+│  │ • autodeleverageEnabled = 1 in market config   │       │
+│  └──────────────────────────────────────────────┘       │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Whitelist Roles (delta-mint program)
+
+| Role | Can Mint | Can Hold | Can Receive via Liquidation | Purpose |
+|---|---|---|---|---|
+| `Holder` | Yes | Yes | Yes | KYC'd end users |
+| `Liquidator` | No | Yes | Yes | Pre-vetted bot operators |
+
+The `add_liquidator` instruction creates a whitelist entry with `role = Liquidator`. These wallets can receive dUSDY collateral during Kamino liquidations but **cannot mint new tokens** — they only participate in the secondary market.
+
+### Liquidation Parameters
 
 | Parameter | Value |
 |---|---|
@@ -176,6 +225,16 @@ Kamino V2 handles liquidations natively — **no custom liquidation logic needed
 | Bad debt bonus | 99 bps |
 | Auto-deleverage | Enabled |
 | Margin call period | 7 days (604,800 seconds) |
+| Liquidator whitelist | Required (via `add_liquidator`) |
+
+### Alternative: Transfer Hook (Future)
+
+A more flexible long-term approach is to deploy a **Token-2022 transfer hook** that:
+1. Checks if the receiving wallet has a whitelist PDA
+2. Exempts CPI calls originating from klend's liquidation instruction
+3. This removes the need to pre-whitelist every liquidator
+
+This is tracked as a future enhancement — the whitelisted bot approach works for launch.
 
 ---
 
@@ -241,8 +300,9 @@ Kamino V2 handles liquidations natively — **no custom liquidation logic needed
 
 ### 4. Liquidation Considerations
 - Kamino V2 handles liquidation mechanics natively ✅
-- Open question: liquidator receives dUSDY — may need transfer hook or whitelist exemption for liquidators
-- Auto-deleverage serves as backstop
+- **Solved:** Whitelisted liquidator bots via `add_liquidator` instruction ✅
+- **Solved:** Auto-deleverage enabled as backstop (no third-party collateral transfer) ✅
+- **Future:** Transfer hook for fully permissionless KYC-gated liquidation
 
 ### 5. Production Deployment
 - [ ] Deploy delta-mint program to devnet

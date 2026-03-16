@@ -92,6 +92,7 @@ pub mod delta_mint {
         entry.wallet = ctx.accounts.wallet.key();
         entry.mint_config = ctx.accounts.mint_config.key();
         entry.approved = true;
+        entry.role = WhitelistRole::Holder;
         entry.approved_at = Clock::get()?.unix_timestamp;
         entry.bump = ctx.bumps.whitelist_entry;
 
@@ -123,12 +124,41 @@ pub mod delta_mint {
         Ok(())
     }
 
+    /// Adds a wallet as an approved liquidator.
+    /// Liquidators can receive dUSDY collateral during Kamino liquidations
+    /// without going through full KYC — they are pre-vetted bot operators.
+    pub fn add_liquidator(ctx: Context<AddToWhitelist>) -> Result<()> {
+        let entry = &mut ctx.accounts.whitelist_entry;
+        entry.wallet = ctx.accounts.wallet.key();
+        entry.mint_config = ctx.accounts.mint_config.key();
+        entry.approved = true;
+        entry.role = WhitelistRole::Liquidator;
+        entry.approved_at = Clock::get()?.unix_timestamp;
+        entry.bump = ctx.bumps.whitelist_entry;
+
+        let config = &mut ctx.accounts.mint_config;
+        config.total_whitelisted = config.total_whitelisted.checked_add(1).unwrap();
+
+        emit!(WhitelistEvent {
+            wallet: entry.wallet,
+            mint: config.mint,
+            approved: true,
+            timestamp: entry.approved_at,
+        });
+
+        Ok(())
+    }
+
     /// Mints tokens to a whitelisted recipient's token account.
     /// Fails if the recipient is not on the KYC whitelist.
     pub fn mint_to(ctx: Context<MintTokens>, amount: u64) -> Result<()> {
         require!(
             ctx.accounts.whitelist_entry.approved,
             DeltaError::NotWhitelisted
+        );
+        require!(
+            ctx.accounts.whitelist_entry.role == WhitelistRole::Holder,
+            DeltaError::LiquidatorCannotMint
         );
         require!(amount > 0, DeltaError::InvalidAmount);
 
@@ -301,10 +331,21 @@ pub struct WhitelistEntry {
     pub mint_config: Pubkey,
     /// Whether the wallet is currently approved.
     pub approved: bool,
+    /// Role: Holder (KYC'd, can mint/hold) or Liquidator (can receive via liquidation only).
+    pub role: WhitelistRole,
     /// Unix timestamp when the wallet was approved.
     pub approved_at: i64,
     /// Bump for this PDA.
     pub bump: u8,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, InitSpace)]
+pub enum WhitelistRole {
+    /// Full KYC'd holder — can receive minted tokens and hold.
+    Holder,
+    /// Approved liquidator bot — can receive collateral during Kamino liquidations.
+    /// Cannot mint new tokens, only receive via protocol liquidation flows.
+    Liquidator,
 }
 
 // ---------------------------------------------------------------------------
@@ -337,6 +378,8 @@ pub enum DeltaError {
     NotWhitelisted,
     #[msg("Mint amount must be greater than zero")]
     InvalidAmount,
+    #[msg("Liquidator role cannot mint new tokens")]
+    LiquidatorCannotMint,
     #[msg("Failed to initialize Token-2022 mint with extensions")]
     MintInitFailed,
 }

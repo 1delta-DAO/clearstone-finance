@@ -250,6 +250,10 @@ describe("kamino-market-creation (mainnet fork)", () => {
   let mintAuthorityPda: PublicKey;
   let authorityWhitelistPda: PublicKey;
 
+  // ---- Liquidator bot state ----
+  const liquidatorBot = Keypair.generate();
+  let liquidatorWhitelistPda: PublicKey;
+
   // ---- Kamino market state ----
   const marketKeypair = Keypair.generate();
   const dUsdyReserveKeypair = Keypair.generate();
@@ -348,6 +352,14 @@ describe("kamino-market-creation (mainnet fork)", () => {
       ],
       program.programId
     );
+    [liquidatorWhitelistPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("whitelist"),
+        mintConfigPda.toBuffer(),
+        liquidatorBot.publicKey.toBuffer(),
+      ],
+      program.programId
+    );
   });
 
   // =========================================================================
@@ -428,6 +440,74 @@ describe("kamino-market-creation (mainnet fork)", () => {
     expect(ataInfo).to.not.be.null;
     const balance = ataInfo!.data.readBigUInt64LE(64);
     expect(Number(balance)).to.equal(100_000_000);
+  });
+
+  // =========================================================================
+  // Phase 1b — Liquidator whitelist (KYC-gated liquidation)
+  // =========================================================================
+
+  it("whitelists a liquidator bot via add_liquidator", async () => {
+    await program.methods
+      .addLiquidator()
+      .accounts({
+        authority: provider.wallet.publicKey,
+        mintConfig: mintConfigPda,
+        wallet: liquidatorBot.publicKey,
+        whitelistEntry: liquidatorWhitelistPda,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+
+    const entry = await program.account.whitelistEntry.fetch(
+      liquidatorWhitelistPda
+    );
+    expect(entry.approved).to.be.true;
+    // Verify role is Liquidator (enum variant index 1)
+    expect(JSON.stringify(entry.role)).to.include("liquidator");
+    console.log(
+      `    Liquidator bot whitelisted: ${liquidatorBot.publicKey.toBase58()}`
+    );
+  });
+
+  it("rejects minting to a liquidator-role wallet", async () => {
+    const liquidatorAta = getAssociatedTokenAddressSync(
+      dUsdyMintKeypair.publicKey,
+      liquidatorBot.publicKey,
+      false,
+      TOKEN_2022_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+
+    const createAtaIx = createAssociatedTokenAccountInstruction(
+      provider.wallet.publicKey,
+      liquidatorAta,
+      liquidatorBot.publicKey,
+      dUsdyMintKeypair.publicKey,
+      TOKEN_2022_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+
+    try {
+      await program.methods
+        .mintTo(new BN(1_000_000))
+        .accounts({
+          authority: provider.wallet.publicKey,
+          mintConfig: mintConfigPda,
+          mint: dUsdyMintKeypair.publicKey,
+          mintAuthority: mintAuthorityPda,
+          whitelistEntry: liquidatorWhitelistPda,
+          destination: liquidatorAta,
+          tokenProgram: TOKEN_2022_PROGRAM_ID,
+        })
+        .preInstructions([createAtaIx])
+        .rpc();
+      expect.fail("Should have rejected mint to liquidator");
+    } catch (err: any) {
+      expect(err.toString()).to.include("LiquidatorCannotMint");
+      console.log(
+        "    Correctly rejected: liquidator role cannot mint new tokens"
+      );
+    }
   });
 
   // =========================================================================
@@ -780,12 +860,15 @@ describe("kamino-market-creation (mainnet fork)", () => {
     console.log("       - dUSDY mint has CT extension enabled");
     console.log("       - Standard balances used by klend (compatible)");
     console.log("       - Users opt-in to CT on their token accounts");
-    console.log("    4. Liquidations:");
-    console.log("       - Kamino V2 handles liquidations natively");
+    console.log("    4. Liquidations (whitelisted approach):");
+    console.log("       - Fast path: pre-approved liquidator bots (add_liquidator)");
+    console.log("       - Backstop: Kamino auto-deleverage (72hr margin call)");
+    console.log("       - Liquidator role: can receive dUSDY, cannot mint");
     console.log("       - Min/max bonus: 200–500 bps (per config)");
-    console.log("       - Auto-deleverage enabled");
+    console.log("       - Future: transfer hook for permissionless KYC'd liq");
     console.log("    5. KYC gating:");
-    console.log("       - Minting requires whitelist entry via delta-mint");
+    console.log("       - Holders: full KYC, can mint + hold + deposit");
+    console.log("       - Liquidators: vetted bots, receive-only");
     console.log("       - Lending market itself is permissionless");
     console.log("       - KYC enforcement at token issuance layer");
     console.log("    ============================================\n");
