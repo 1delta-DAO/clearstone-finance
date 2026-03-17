@@ -24,14 +24,24 @@ import {
  * Build `refresh_reserve` instruction.
  * Must be called before any operation that reads reserve state.
  *
- * @param reserve       The reserve pubkey
- * @param market        The lending market
- * @param pythOracle    Pyth price feed account for this reserve's token
+ * The klend program expects 6 accounts: reserve, market, plus 4 oracle slots
+ * (pyth, switchboard_price, switchboard_twap, scope_prices).
+ * Unused oracle slots must be filled with PublicKey.default (system program).
+ *
+ * @param reserve              The reserve pubkey
+ * @param market               The lending market
+ * @param pythOracle           Pyth price feed account (or PublicKey.default if unused)
+ * @param switchboardPrice     Switchboard price aggregator (default: PublicKey.default)
+ * @param switchboardTwap      Switchboard TWAP aggregator (default: PublicKey.default)
+ * @param scopePrices          Scope oracle prices account (default: PublicKey.default)
  */
 export function refreshReserve(
   reserve: PublicKey,
   market: PublicKey,
   pythOracle: PublicKey,
+  switchboardPrice: PublicKey = PublicKey.default,
+  switchboardTwap: PublicKey = PublicKey.default,
+  scopePrices: PublicKey = PublicKey.default,
 ): TransactionInstruction {
   return new TransactionInstruction({
     programId: KLEND_PROGRAM_ID,
@@ -39,6 +49,9 @@ export function refreshReserve(
       { pubkey: reserve, isSigner: false, isWritable: true },
       { pubkey: market, isSigner: false, isWritable: false },
       { pubkey: pythOracle, isSigner: false, isWritable: false },
+      { pubkey: switchboardPrice, isSigner: false, isWritable: false },
+      { pubkey: switchboardTwap, isSigner: false, isWritable: false },
+      { pubkey: scopePrices, isSigner: false, isWritable: false },
     ],
     data: DISC.refreshReserve,
   });

@@ -10,7 +10,13 @@
     "test:full-flow": "ANCHOR_PROVIDER_URL=https://api.mainnet-beta.solana.com pnpm ts-mocha -p ./tsconfig.json -t 1000000 tests/kamino-full-flow.fork.ts",
     "test:full-flow:validator": "bash scripts/test-validator-flow.sh",
     "deploy:devnet": "bash scripts/deploy-devnet.sh",
+    "deploy:mnemonic": "bash scripts/deploy-mnemonic.sh",
+    "deploy:mnemonic:mainnet": "bash scripts/deploy-mnemonic.sh mainnet-beta",
     "deploy:mainnet": "PATH=$HOME/.local/share/solana/install/active_release/bin:$PATH anchor deploy --provider.cluster mainnet",
+    "devnet:governor": "npx ts-node scripts/deploy-governor-devnet.ts",
+    "devnet:oracles": "npx ts-node scripts/setup-devnet-oracles.ts",
+    "devnet:market": "npx ts-node scripts/setup-devnet-market.ts",
+    "devnet:full": "pnpm devnet:oracles && pnpm devnet:governor && pnpm devnet:market",
     "fetch:tokens": "npx ts-node scripts/fetch-token-list.ts"
   },
   "dependencies": {

@@ -1,1 +1,1 @@
-{"root":["./src/App.tsx","./src/main.tsx"],"version":"5.9.3"}
+{"root":["./src/App.tsx","./src/main.tsx","./src/components/Layout.tsx","./src/pages/AdminPanel.tsx","./src/pages/LendingPanel.tsx"],"version":"5.9.3"}
