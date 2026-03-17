@@ -1,18 +1,42 @@
+import "dotenv/config";
 import Fastify from "fastify";
+import rateLimit from "@fastify/rate-limit";
+import { kycRoutes } from "./routes/kyc.routes.js";
+import { config } from "./config.js";
 
 const app = Fastify({ logger: true });
 
-app.get("/health", async () => {
-  return { status: "ok" };
+// ---------------------------------------------------------------------------
+// Plugins
+// ---------------------------------------------------------------------------
+
+await app.register(rateLimit, {
+  max: config.rateLimit.max,
+  timeWindow: config.rateLimit.timeWindowMs,
+  errorResponseBuilder: (_req, context) => ({
+    success: false,
+    error: `Rate limit exceeded. Try again in ${Math.ceil(context.ttl / 1000)}s`,
+  }),
 });
 
-const start = async () => {
-  try {
-    await app.listen({ port: 3001, host: "0.0.0.0" });
-  } catch (err) {
-    app.log.error(err);
-    process.exit(1);
-  }
-};
+// ---------------------------------------------------------------------------
+// Routes
+// ---------------------------------------------------------------------------
 
-start();
+app.get("/health", async () => ({
+  status: "ok",
+  timestamp: new Date().toISOString(),
+}));
+
+await app.register(kycRoutes);
+
+// ---------------------------------------------------------------------------
+// Start
+// ---------------------------------------------------------------------------
+
+try {
+  await app.listen({ port: config.port, host: config.host });
+} catch (err) {
+  app.log.error(err);
+  process.exit(1);
+}
