@@ -1,0 +1,26 @@
+{
+  "name": "@delta/calldata-sdk-solana",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./admin": "./dist/admin/index.js",
+    "./lending": "./dist/lending/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.30.1",
+    "@solana/spl-token": "^0.4.6",
+    "@solana/web3.js": "^1.98.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.37",
+    "typescript": "^5.5.0"
+  }
+}
