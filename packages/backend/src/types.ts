@@ -42,3 +42,14 @@ export interface KytResult {
   providerRef?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Risk Controls
+// ---------------------------------------------------------------------------
+
+export interface RiskCheckResult {
+  passed: boolean;
+  /** Populated when passed === false */
+  reason?: string;
+  walletExposureUsd: number;
+  poolExposureUsd: number;
+}

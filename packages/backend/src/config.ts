@@ -41,6 +41,8 @@ export const config = {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean),
+  depositCapUsd: parseInt(process.env.DEPOSIT_CAP_USD ?? "1000000", 10),
+  poolCapUsd: parseInt(process.env.POOL_CAP_USD ?? "50000000", 10),
 
   // Lazy-loaded to avoid crashing on import during tests
   get adminKeypair(): Keypair {
