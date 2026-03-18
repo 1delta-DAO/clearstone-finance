@@ -44,6 +44,34 @@ export interface KytResult {
 
 export type KytRecord = KytResult;
 
+// ---------------------------------------------------------------------------
+// Travel Rule (FATF Recommendation 16)
+// ---------------------------------------------------------------------------
+
+export interface TravelRuleParty {
+  /** VASP DID or LEI */
+  vaspDid: string;
+  name: string;
+  walletAddress: string;
+}
+
+export interface TravelRuleTransferBody {
+  originator: TravelRuleParty;
+  beneficiary: TravelRuleParty;
+  /** USD-equivalent amount */
+  amount: number;
+  /** Asset symbol, e.g. "USDY" */
+  asset: string;
+  /** Solana tx signature if already broadcast */
+  txSignature?: string;
+}
+
+export interface TravelRuleRecord extends TravelRuleTransferBody {
+  transferId: string;
+  createdAt: string;
+  /** true if amount < $1,000 FATF threshold — no VASP message required */
+  belowThreshold: boolean;
+}
 
 // ---------------------------------------------------------------------------
 // Risk Controls
