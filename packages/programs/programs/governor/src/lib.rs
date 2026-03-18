@@ -4,7 +4,7 @@ use delta_mint::cpi as delta_cpi;
 use delta_mint::cpi::accounts as delta_accounts;
 use delta_mint::program::DeltaMint as DeltaMintProgram;
 
-declare_id!("2TaDoLXG6HzXpFJngMvNt9tY29Zovah77HvJZvqW96sr");
+declare_id!("BrZYcbPBt9nW4b6xUSodwXRfAfRNZTCzthp1ywMG3KJh");
 
 #[program]
 pub mod governor {

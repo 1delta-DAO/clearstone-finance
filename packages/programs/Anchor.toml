@@ -6,13 +6,13 @@ skip-lint = false
 
 [programs.localnet]
 counter = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
-delta_mint = "3FLEACtqQ2G9h6sc7gLniVfK4maG59Eo4pt8H4A9QggY"
-governor = "2TaDoLXG6HzXpFJngMvNt9tY29Zovah77HvJZvqW96sr"
+delta_mint = "13Su8nR5NBzQ7UwFFUiNAH1zH5DQtLyjezhbwRREQkEn"
+governor = "BrZYcbPBt9nW4b6xUSodwXRfAfRNZTCzthp1ywMG3KJh"
 
 [programs.devnet]
 counter = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
-delta_mint = "3FLEACtqQ2G9h6sc7gLniVfK4maG59Eo4pt8H4A9QggY"
-governor = "2TaDoLXG6HzXpFJngMvNt9tY29Zovah77HvJZvqW96sr"
+delta_mint = "13Su8nR5NBzQ7UwFFUiNAH1zH5DQtLyjezhbwRREQkEn"
+governor = "BrZYcbPBt9nW4b6xUSodwXRfAfRNZTCzthp1ywMG3KJh"
 
 [registry]
 url = "https://api.apr.dev"

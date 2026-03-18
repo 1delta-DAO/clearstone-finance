@@ -1,8 +1,8 @@
 import { PublicKey } from "@solana/web3.js";
 
 // Program IDs
-export const DELTA_MINT_PROGRAM_ID = new PublicKey("3FLEACtqQ2G9h6sc7gLniVfK4maG59Eo4pt8H4A9QggY");
-export const GOVERNOR_PROGRAM_ID = new PublicKey("2TaDoLXG6HzXpFJngMvNt9tY29Zovah77HvJZvqW96sr");
+export const DELTA_MINT_PROGRAM_ID = new PublicKey("13Su8nR5NBzQ7UwFFUiNAH1zH5DQtLyjezhbwRREQkEn");
+export const GOVERNOR_PROGRAM_ID = new PublicKey("BrZYcbPBt9nW4b6xUSodwXRfAfRNZTCzthp1ywMG3KJh");
 export const KLEND_PROGRAM_ID = new PublicKey("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD");
 export const TOKEN_2022_PROGRAM_ID = new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 export const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
@@ -26,9 +26,9 @@ export const DISC = {
   initializeMint: Buffer.from([0x5a, 0x5d, 0xaf, 0xf5, 0xf6, 0x61, 0x7c, 0x7b]),
   addToWhitelist: Buffer.from([0xba, 0x47, 0x06, 0xef, 0x78, 0xf6, 0x4c, 0x53]),
   mintTokens: Buffer.from([0x43, 0x18, 0x88, 0x5d, 0x2a, 0x5e, 0x32, 0x14]),
-  // klend
-  initLendingMarket: Buffer.from([0xaf, 0x08, 0x5f, 0x1f, 0x8d, 0x39, 0x53, 0xfe]),
-  initReserve: Buffer.from([0x5a, 0xa0, 0xb0, 0x08, 0xf7, 0x14, 0xdb, 0xdb]),
+  // klend — sha256("global:<snake_case>")[0..8]
+  initLendingMarket: Buffer.from([0x22, 0xa2, 0x74, 0x0e, 0x65, 0x89, 0x5e, 0xef]),
+  initReserve: Buffer.from([0x8a, 0xf5, 0x47, 0xe1, 0x99, 0x04, 0x03, 0x2b]),
   updateReserveConfig: Buffer.from([0x3d, 0x94, 0x64, 0x46, 0x8f, 0x6b, 0x11, 0x0d]),
   initObligation: Buffer.from([0xfc, 0xbb, 0x5b, 0xf1, 0xa1, 0xf8, 0x9c, 0x12]),
   initUserMetadata: Buffer.from([0xfb, 0xdd, 0x31, 0x1e, 0x37, 0x2b, 0x82, 0xb5]),

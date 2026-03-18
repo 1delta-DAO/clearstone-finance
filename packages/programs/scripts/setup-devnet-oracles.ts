@@ -24,6 +24,10 @@ import {
 } from "@solana/web3.js";
 import * as fs from "fs";
 import * as path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -130,6 +134,20 @@ async function main() {
   console.log(`  RPC:      ${RPC_URL}`);
   console.log(`  Payer:    ${payer.publicKey.toBase58()}`);
   console.log("============================================\n");
+
+  // Ensure wallet has SOL
+  const balance = await conn.getBalance(payer.publicKey);
+  console.log(`Balance: ${(balance / 1e9).toFixed(4)} SOL`);
+  if (balance < 0.1 * 1e9) {
+    console.log("Requesting airdrop...");
+    try {
+      const sig = await conn.requestAirdrop(payer.publicKey, 2 * 1e9);
+      await conn.confirmTransaction(sig, "confirmed");
+      console.log("Airdrop received.\n");
+    } catch {
+      console.log("Airdrop failed (rate limited). Fund wallet manually.\n");
+    }
+  }
 
   // Check USDY V2 oracle exists
   const usdyInfo = await conn.getAccountInfo(PYTH_USDY_V2);

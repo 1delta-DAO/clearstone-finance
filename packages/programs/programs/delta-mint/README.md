@@ -2,7 +2,7 @@
 
 Privacy-centric token program built on Solana Token-2022 with KYC-gated minting and confidential transfer support.
 
-**Program ID:** `3FLEACtqQ2G9h6sc7gLniVfK4maG59Eo4pt8H4A9QggY`
+**Program ID:** `13Su8nR5NBzQ7UwFFUiNAH1zH5DQtLyjezhbwRREQkEn`
 
 ## Architecture
 

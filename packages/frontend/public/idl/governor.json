@@ -1,0 +1,551 @@
+{
+  "address": "BrZYcbPBt9nW4b6xUSodwXRfAfRNZTCzthp1ywMG3KJh",
+  "metadata": {
+    "name": "governor",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Governor for KYC-gated lending pools — orchestrates delta-mint and Kamino market setup"
+  },
+  "instructions": [
+    {
+      "name": "add_participant",
+      "docs": [
+        "Add a participant (KYC'd holder or liquidator bot) to the pool.",
+        "Delegates to delta-mint's add_to_whitelist or add_liquidator via CPI."
+      ],
+      "discriminator": [
+        153,
+        137,
+        99,
+        142,
+        169,
+        212,
+        240,
+        50
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "pool_config"
+          ]
+        },
+        {
+          "name": "pool_config"
+        },
+        {
+          "name": "dm_mint_config",
+          "writable": true
+        },
+        {
+          "name": "wallet"
+        },
+        {
+          "name": "whitelist_entry",
+          "writable": true
+        },
+        {
+          "name": "delta_mint_program",
+          "address": "13Su8nR5NBzQ7UwFFUiNAH1zH5DQtLyjezhbwRREQkEn"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "role",
+          "type": {
+            "defined": {
+              "name": "ParticipantRole"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "initialize_pool",
+      "docs": [
+        "Step 1: Create a new KYC-gated lending pool.",
+        "Stores the pool config and creates the wrapped Token-2022 mint",
+        "(with confidential transfer extension) via CPI to delta-mint.",
+        "",
+        "After this, call `register_lending_market` once the klend market",
+        "and reserves have been created off-chain."
+      ],
+      "discriminator": [
+        95,
+        180,
+        10,
+        172,
+        84,
+        174,
+        232,
+        40
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "pool_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "underlying_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "underlying_mint"
+        },
+        {
+          "name": "wrapped_mint",
+          "docs": [
+            "New Token-2022 mint keypair for the KYC-wrapped token."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "dm_mint_config",
+          "writable": true
+        },
+        {
+          "name": "dm_mint_authority"
+        },
+        {
+          "name": "delta_mint_program",
+          "address": "13Su8nR5NBzQ7UwFFUiNAH1zH5DQtLyjezhbwRREQkEn"
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "params",
+          "type": {
+            "defined": {
+              "name": "PoolParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "mint_wrapped",
+      "docs": [
+        "Mint wrapped tokens to a whitelisted holder.",
+        "Only works when pool is Active and recipient has Holder role."
+      ],
+      "discriminator": [
+        130,
+        90,
+        18,
+        116,
+        188,
+        64,
+        204,
+        199
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "pool_config"
+          ]
+        },
+        {
+          "name": "pool_config"
+        },
+        {
+          "name": "dm_mint_config"
+        },
+        {
+          "name": "wrapped_mint",
+          "writable": true
+        },
+        {
+          "name": "dm_mint_authority"
+        },
+        {
+          "name": "whitelist_entry"
+        },
+        {
+          "name": "destination",
+          "writable": true
+        },
+        {
+          "name": "delta_mint_program",
+          "address": "13Su8nR5NBzQ7UwFFUiNAH1zH5DQtLyjezhbwRREQkEn"
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "register_lending_market",
+      "docs": [
+        "Step 2: Register the klend market and reserve addresses after off-chain creation.",
+        "Transitions the pool from Initializing → Active."
+      ],
+      "discriminator": [
+        55,
+        69,
+        63,
+        204,
+        224,
+        83,
+        4,
+        64
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "pool_config"
+          ]
+        },
+        {
+          "name": "pool_config",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "lending_market",
+          "type": "pubkey"
+        },
+        {
+          "name": "collateral_reserve",
+          "type": "pubkey"
+        },
+        {
+          "name": "borrow_reserve",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "set_pool_status",
+      "docs": [
+        "Freeze or unfreeze the pool."
+      ],
+      "discriminator": [
+        112,
+        87,
+        135,
+        223,
+        83,
+        204,
+        132,
+        53
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "pool_config"
+          ]
+        },
+        {
+          "name": "pool_config",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "status",
+          "type": {
+            "defined": {
+              "name": "PoolStatus"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "PoolConfig",
+      "discriminator": [
+        26,
+        108,
+        14,
+        123,
+        116,
+        230,
+        129,
+        43
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "PoolCreatedEvent",
+      "discriminator": [
+        25,
+        94,
+        75,
+        47,
+        112,
+        99,
+        53,
+        63
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidPoolStatus",
+      "msg": "Pool is not in the expected status for this operation"
+    },
+    {
+      "code": 6001,
+      "name": "PoolNotActive",
+      "msg": "Pool is not active — register lending market first"
+    }
+  ],
+  "types": [
+    {
+      "name": "ParticipantRole",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Holder"
+          },
+          {
+            "name": "Liquidator"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PoolConfig",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "docs": [
+              "Pool authority (can whitelist, mint, configure)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "underlying_mint",
+            "docs": [
+              "Underlying token (e.g., USDY)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "underlying_oracle",
+            "docs": [
+              "Pyth oracle for the underlying token."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "borrow_mint",
+            "docs": [
+              "Borrow asset (e.g., USDC)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "borrow_oracle",
+            "docs": [
+              "Pyth oracle for the borrow asset."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "wrapped_mint",
+            "docs": [
+              "The KYC-wrapped Token-2022 mint (e.g., dUSDY)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "dm_mint_config",
+            "docs": [
+              "delta-mint MintConfig PDA for the wrapped token."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "lending_market",
+            "docs": [
+              "Kamino lending market address (set after off-chain creation)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "collateral_reserve",
+            "docs": [
+              "Kamino collateral reserve (wrapped token)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "borrow_reserve",
+            "docs": [
+              "Kamino borrow reserve (e.g., USDC)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "decimals",
+            "docs": [
+              "Token decimals."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "ltv_pct",
+            "docs": [
+              "Loan-to-value percentage."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "liquidation_threshold_pct",
+            "docs": [
+              "Liquidation threshold percentage."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "status",
+            "docs": [
+              "Pool lifecycle status."
+            ],
+            "type": {
+              "defined": {
+                "name": "PoolStatus"
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "PDA bump."
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PoolCreatedEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "underlying_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "wrapped_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PoolParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "underlying_oracle",
+            "type": "pubkey"
+          },
+          {
+            "name": "borrow_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "borrow_oracle",
+            "type": "pubkey"
+          },
+          {
+            "name": "decimals",
+            "type": "u8"
+          },
+          {
+            "name": "ltv_pct",
+            "type": "u8"
+          },
+          {
+            "name": "liquidation_threshold_pct",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PoolStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Initializing"
+          },
+          {
+            "name": "Active"
+          },
+          {
+            "name": "Frozen"
+          }
+        ]
+      }
+    }
+  ]
+}

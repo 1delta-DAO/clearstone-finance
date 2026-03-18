@@ -13,11 +13,15 @@
     "deploy:mnemonic": "bash scripts/deploy-mnemonic.sh",
     "deploy:mnemonic:mainnet": "bash scripts/deploy-mnemonic.sh mainnet-beta",
     "deploy:mainnet": "PATH=$HOME/.local/share/solana/install/active_release/bin:$PATH anchor deploy --provider.cluster mainnet",
-    "devnet:governor": "npx ts-node scripts/deploy-governor-devnet.ts",
-    "devnet:oracles": "npx ts-node scripts/setup-devnet-oracles.ts",
-    "devnet:market": "npx ts-node scripts/setup-devnet-market.ts",
+    "devnet:governor": "npx tsx scripts/deploy-governor-devnet.ts",
+    "devnet:oracles": "npx tsx scripts/setup-devnet-oracles.ts",
+    "devnet:market": "npx tsx scripts/setup-devnet-market.ts",
     "devnet:full": "pnpm devnet:oracles && pnpm devnet:governor && pnpm devnet:market",
-    "fetch:tokens": "npx ts-node scripts/fetch-token-list.ts"
+    "devnet:complete": "npx tsx scripts/complete-devnet-setup.ts",
+    "deploy:all": "bash scripts/deploy-all.sh",
+    "deploy:all:devnet": "bash scripts/deploy-all.sh devnet",
+    "deploy:all:mainnet": "bash scripts/deploy-all.sh mainnet-beta",
+    "fetch:tokens": "npx tsx scripts/fetch-token-list.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",
@@ -29,11 +33,13 @@
     "@types/bn.js": "^5.1.0",
     "@types/chai": "^5.2.3",
     "@types/mocha": "^10.0.0",
+    "@types/node": "^25.5.0",
     "anchor-bankrun": "^0.5.0",
     "chai": "^4.4.0",
     "mocha": "^10.7.0",
     "solana-bankrun": "^0.4.0",
     "ts-mocha": "^10.0.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.5.0"
   }
 }

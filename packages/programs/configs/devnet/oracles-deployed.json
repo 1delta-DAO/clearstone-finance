@@ -1,0 +1,26 @@
+{
+  "devnetOracles": {
+    "USDY/USD": {
+      "address": "E4pitSrZV9MWSspahe2vr26Cwsn3podnvHvW3cuT74R4",
+      "type": "pyth_v2_native",
+      "price": "~$1.00 (live feed)"
+    },
+    "USDC/USD": {
+      "address": "HSi8jh6q9XrbMrHi84G2QFafS3sfuo23hewTNBVPQ9EF",
+      "type": "mock_pyth_v2",
+      "price": "$1.00 (fixed)",
+      "warning": "Owned by System Program — for devnet testing only"
+    }
+  },
+  "alternativeFeeds": {
+    "DAI/USD_v2": "A8XFp1YSUqyDDvTwRXM1vmhPHCLxziv9FWFkPpLY",
+    "BUSD/USD_v2": "TRrB75VTpiojCy99S5BHmYkjARgtfBqZKk5JbeouUkV",
+    "TUSD/USD_v2": "2sbXow64dSbktGM6gG9FpszwVu7GNhr6Qi2WHRCP9ULn",
+    "SOL/USD_v2": "J83w4HKfqxwcq3BEMMkPFSppX3gqekLyLJBexebFVkix"
+  },
+  "pythPrograms": {
+    "v2_devnet": "gSbePebfvPy7tRqimPoVecS2UsBvYv46ynrzWocc92s",
+    "push_devnet": "pythWSnswVUd12oZpeFP8e9CVaEqJg25g1Vtc2biRsT",
+    "receiver_devnet": "rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ"
+  }
+}

@@ -18,8 +18,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-DELTA_MINT_ID="3FLEACtqQ2G9h6sc7gLniVfK4maG59Eo4pt8H4A9QggY"
-GOVERNOR_ID="2TaDoLXG6HzXpFJngMvNt9tY29Zovah77HvJZvqW96sr"
+DELTA_MINT_ID="13Su8nR5NBzQ7UwFFUiNAH1zH5DQtLyjezhbwRREQkEn"
+GOVERNOR_ID="BrZYcbPBt9nW4b6xUSodwXRfAfRNZTCzthp1ywMG3KJh"
 DELTA_MINT_SO="$ROOT/target/deploy/delta_mint.so"
 GOVERNOR_SO="$ROOT/target/deploy/governor.so"
 DELTA_MINT_KP="$ROOT/target/deploy/delta_mint-keypair.json"

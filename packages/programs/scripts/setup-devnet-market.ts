@@ -27,9 +27,19 @@ import {
 import {
   TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
+  getAssociatedTokenAddressSync,
+  createAssociatedTokenAccountInstruction,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  createMint,
+  mintTo,
+  getOrCreateAssociatedTokenAccount,
 } from "@solana/spl-token";
 import * as fs from "fs";
 import * as path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -39,21 +49,31 @@ const RPC_URL = process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com";
 
 const KLEND_PROGRAM_ID = new PublicKey("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD");
 const KLEND_GLOBAL_CONFIG = new PublicKey("BEe6HXZf6cByeb8iCxukjB8k74kJN3cVbBAGi49Hfi6W");
-const GOVERNOR_PROGRAM_ID = new PublicKey("2TaDoLXG6HzXpFJngMvNt9tY29Zovah77HvJZvqW96sr");
+const GOVERNOR_PROGRAM_ID = new PublicKey("BrZYcbPBt9nW4b6xUSodwXRfAfRNZTCzthp1ywMG3KJh");
+
+// Devnet token mints (verified on-chain)
+const DEVNET_USDC_MINT = new PublicKey("8iBux2LRja1PhVZph8Rw4Hi45pgkaufNEiaZma5nTD5g");
+const DEVNET_USDT_MINT = new PublicKey("5dXXpWyZCCPhBHxmp79Du81t7t9oh7HacUW864ARFyft");
+const DEVNET_USX_MINT = new PublicKey("7QC4zjrKA6XygpXPQCKSS9BmAsEFDJR6awiHSdgLcDvS");
+const DEVNET_EUSX_MINT = new PublicKey("Gkt9h4QWpPBDtbaF5HvYKCc87H5WCRTUtMf77HdTGHBt");
+
+// Devnet programs
+const DEVNET_USX_PROGRAM = new PublicKey("usxTTTgAJS1Cr6GTFnNRnNqtCbQKQXcUTvguz3UuwBD");
+const DEVNET_YIELD_VAULT_PROGRAM = new PublicKey("euxU8CnAgYk5qkRrSdqKoCM8huyexecRRWS67dz2FVr");
 
 // Pyth V2 devnet USDY oracle
 const PYTH_USDY_DEVNET = new PublicKey("E4pitSrZV9MWSspahe2vr26Cwsn3podnvHvW3cuT74R4");
 
-// klend account sizes (from mainnet)
-const LENDING_MARKET_SIZE = 4656;
-const RESERVE_SIZE = 8616;
+// klend account sizes — devnet program expects slightly larger than mainnet
+const LENDING_MARKET_SIZE = 4664;
+const RESERVE_SIZE = 8624;
 
-// Discriminators
+// Discriminators — computed as sha256("global:<snake_case_name>")[0..8]
 const DISC = {
-  initLendingMarket: Buffer.from([0xaf, 0x08, 0x5f, 0x1f, 0x8d, 0x39, 0x53, 0xfe]),
-  initReserve: Buffer.from([0x5a, 0xa0, 0xb0, 0x08, 0xf7, 0x14, 0xdb, 0xdb]),
+  initLendingMarket: Buffer.from([0x22, 0xa2, 0x74, 0x0e, 0x65, 0x89, 0x5e, 0xef]),
+  initReserve: Buffer.from([0x8a, 0xf5, 0x47, 0xe1, 0x99, 0x04, 0x03, 0x2b]),
   updateReserveConfig: Buffer.from([0x3d, 0x94, 0x64, 0x46, 0x8f, 0x6b, 0x11, 0x0d]),
-  refreshReserve: Buffer.from([0x02, 0xda, 0x8a, 0x96, 0xa3, 0x16, 0x8b, 0x23]),
+  refreshReserve: Buffer.from([0x02, 0xda, 0x8a, 0xeb, 0x4f, 0xc9, 0x19, 0x66]),
 };
 
 const CONFIG_MODE = {
@@ -88,33 +108,34 @@ function marketAuthorityPda(market: PublicKey): PublicKey {
   return pda;
 }
 
-function reserveLiquiditySupplyPda(reserve: PublicKey, market: PublicKey): PublicKey {
+// PDA seeds: [seed_string, reserve_address] — per klend SDK seeds.js
+function reserveLiquiditySupplyPda(reserve: PublicKey): PublicKey {
   const [pda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("reserve_liq_supply"), market.toBuffer(), reserve.toBuffer()],
+    [Buffer.from("reserve_liq_supply"), reserve.toBuffer()],
     KLEND_PROGRAM_ID
   );
   return pda;
 }
 
-function reserveFeeVaultPda(reserve: PublicKey, market: PublicKey): PublicKey {
+function reserveFeeVaultPda(reserve: PublicKey): PublicKey {
   const [pda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("fee_receiver"), market.toBuffer(), reserve.toBuffer()],
+    [Buffer.from("fee_receiver"), reserve.toBuffer()],
     KLEND_PROGRAM_ID
   );
   return pda;
 }
 
-function reserveCollateralMintPda(reserve: PublicKey, market: PublicKey): PublicKey {
+function reserveCollateralMintPda(reserve: PublicKey): PublicKey {
   const [pda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("reserve_coll_mint"), market.toBuffer(), reserve.toBuffer()],
+    [Buffer.from("reserve_coll_mint"), reserve.toBuffer()],
     KLEND_PROGRAM_ID
   );
   return pda;
 }
 
-function reserveCollateralSupplyPda(reserve: PublicKey, market: PublicKey): PublicKey {
+function reserveCollateralSupplyPda(reserve: PublicKey): PublicKey {
   const [pda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("reserve_coll_supply"), market.toBuffer(), reserve.toBuffer()],
+    [Buffer.from("reserve_coll_supply"), reserve.toBuffer()],
     KLEND_PROGRAM_ID
   );
   return pda;
@@ -132,19 +153,19 @@ function poolConfigPda(underlyingMint: PublicKey): PublicKey {
 // Instruction builders
 // ---------------------------------------------------------------------------
 
-function buildInitLendingMarket(owner: PublicKey, marketKp: PublicKey): TransactionInstruction {
+function buildInitLendingMarket(owner: PublicKey, market: PublicKey): TransactionInstruction {
   const quoteCurrency = Buffer.alloc(32); // "USD" — left as zeros for simplicity
   const data = Buffer.alloc(8 + 32);
   DISC.initLendingMarket.copy(data, 0);
   quoteCurrency.copy(data, 8);
 
+  // Per klend IDL: lendingMarketOwner, lendingMarket, lendingMarketAuthority, systemProgram, rent
   return new TransactionInstruction({
     programId: KLEND_PROGRAM_ID,
     keys: [
       { pubkey: owner, isSigner: true, isWritable: true },
-      { pubkey: marketKp, isSigner: true, isWritable: true },
-      { pubkey: marketAuthorityPda(marketKp), isSigner: false, isWritable: false },
-      { pubkey: KLEND_GLOBAL_CONFIG, isSigner: false, isWritable: false },
+      { pubkey: market, isSigner: false, isWritable: true },
+      { pubkey: marketAuthorityPda(market), isSigner: false, isWritable: false },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
     ],
@@ -153,30 +174,35 @@ function buildInitLendingMarket(owner: PublicKey, marketKp: PublicKey): Transact
 }
 
 function buildInitReserve(
-  owner: PublicKey,
+  signer: PublicKey,
   market: PublicKey,
   reserve: PublicKey,
   mint: PublicKey,
-  tokenProgram: PublicKey
+  initialLiquiditySource: PublicKey,
+  liquidityTokenProgram: PublicKey
 ): TransactionInstruction {
   const mAuth = marketAuthorityPda(market);
+  // Per klend IDL: signer, lendingMarket, lendingMarketAuthority, reserve,
+  //   reserveLiquidityMint, reserveLiquiditySupply, feeReceiver,
+  //   reserveCollateralMint, reserveCollateralSupply, initialLiquiditySource,
+  //   rent, liquidityTokenProgram, collateralTokenProgram, systemProgram
   return new TransactionInstruction({
     programId: KLEND_PROGRAM_ID,
     keys: [
-      { pubkey: owner, isSigner: true, isWritable: true },
-      { pubkey: market, isSigner: false, isWritable: true },
+      { pubkey: signer, isSigner: true, isWritable: true },
+      { pubkey: market, isSigner: false, isWritable: false },
       { pubkey: mAuth, isSigner: false, isWritable: false },
-      { pubkey: reserve, isSigner: true, isWritable: true },
+      { pubkey: reserve, isSigner: false, isWritable: true },
       { pubkey: mint, isSigner: false, isWritable: false },
-      { pubkey: reserveLiquiditySupplyPda(reserve, market), isSigner: false, isWritable: true },
-      { pubkey: reserveFeeVaultPda(reserve, market), isSigner: false, isWritable: true },
-      { pubkey: reserveCollateralMintPda(reserve, market), isSigner: false, isWritable: true },
-      { pubkey: reserveCollateralSupplyPda(reserve, market), isSigner: false, isWritable: true },
-      { pubkey: KLEND_GLOBAL_CONFIG, isSigner: false, isWritable: false },
-      { pubkey: tokenProgram, isSigner: false, isWritable: false },
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: reserveLiquiditySupplyPda(reserve), isSigner: false, isWritable: true },
+      { pubkey: reserveFeeVaultPda(reserve), isSigner: false, isWritable: true },
+      { pubkey: reserveCollateralMintPda(reserve), isSigner: false, isWritable: true },
+      { pubkey: reserveCollateralSupplyPda(reserve), isSigner: false, isWritable: true },
+      { pubkey: initialLiquiditySource, isSigner: false, isWritable: true },
       { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
+      { pubkey: liquidityTokenProgram, isSigner: false, isWritable: false },
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false }, // collateralTokenProgram (always SPL Token)
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     ],
     data: DISC.initReserve,
   });
@@ -190,10 +216,11 @@ function buildUpdateReserveConfig(
   value: Buffer,
   skipValidation = true
 ): TransactionInstruction {
-  const data = Buffer.alloc(8 + 4 + 4 + value.length + 1);
+  // Borsh: disc(8) + mode(u8 enum) + value_len(u32) + value_data + skip(u8 bool)
+  const data = Buffer.alloc(8 + 1 + 4 + value.length + 1);
   let offset = 0;
   DISC.updateReserveConfig.copy(data, offset); offset += 8;
-  data.writeUInt32LE(mode, offset); offset += 4;
+  data.writeUInt8(mode, offset); offset += 1;
   data.writeUInt32LE(value.length, offset); offset += 4;
   value.copy(data, offset); offset += value.length;
   data.writeUInt8(skipValidation ? 1 : 0, offset);
@@ -201,7 +228,7 @@ function buildUpdateReserveConfig(
   return new TransactionInstruction({
     programId: KLEND_PROGRAM_ID,
     keys: [
-      { pubkey: owner, isSigner: true, isWritable: true },
+      { pubkey: owner, isSigner: true, isWritable: false },
       { pubkey: KLEND_GLOBAL_CONFIG, isSigner: false, isWritable: false },
       { pubkey: market, isSigner: false, isWritable: false },
       { pubkey: reserve, isSigner: false, isWritable: true },
@@ -231,7 +258,7 @@ function buildRegisterLendingMarketIx(
   collateralReserve: PublicKey,
   borrowReserve: PublicKey
 ): TransactionInstruction {
-  const disc = Buffer.from([0x84, 0xd6, 0xdb, 0x8a, 0xbe, 0x8c, 0x25, 0x3e]);
+  const disc = Buffer.from([0x37, 0x45, 0x3f, 0xcc, 0xe0, 0x53, 0x04, 0x40]);
   const data = Buffer.alloc(8 + 32 + 32 + 32);
   let offset = 0;
   disc.copy(data, offset); offset += 8;
@@ -294,14 +321,10 @@ async function main() {
   const dUsdyReserveKp = Keypair.generate();
   const usdcReserveKp = Keypair.generate();
 
-  // We need a devnet USDC mint. On devnet there's no canonical USDC.
-  // For testing, we create a regular SPL token mint.
-  const devnetUsdcMintKp = Keypair.generate();
-
   console.log(`\n  Market:         ${marketKp.publicKey.toBase58()}`);
   console.log(`  dUSDY reserve:  ${dUsdyReserveKp.publicKey.toBase58()}`);
   console.log(`  USDC reserve:   ${usdcReserveKp.publicKey.toBase58()}`);
-  console.log(`  USDC mint:      ${devnetUsdcMintKp.publicKey.toBase58()} (devnet test mint)`);
+  console.log(`  USDC mint:      ${DEVNET_USDC_MINT.toBase58()} (verified devnet)`);
 
   // ---------------------------------------------------------------------------
   // Step 1: Create lending market
@@ -336,35 +359,31 @@ async function main() {
 
   const reserveRent = await conn.getMinimumBalanceForRentExemption(RESERVE_SIZE);
 
-  // dUSDY reserve (Token-2022)
-  const tx2a = new Transaction().add(
-    ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 }),
-    SystemProgram.createAccount({
-      fromPubkey: authority.publicKey,
-      newAccountPubkey: dUsdyReserveKp.publicKey,
-      lamports: reserveRent,
-      space: RESERVE_SIZE,
-      programId: KLEND_PROGRAM_ID,
-    }),
-    buildInitReserve(
-      authority.publicKey,
-      marketKp.publicKey,
-      dUsdyReserveKp.publicKey,
-      wrappedMint,
-      TOKEN_2022_PROGRAM_ID
-    )
-  );
-
+  // klend initReserve requires a seed deposit from initialLiquiditySource.
+  // We don't control the devnet USDC mint authority, so create our own test USDC.
+  console.log("\n  Creating test USDC mint (we need mint authority for seed deposit)...");
+  let testUsdcMint: PublicKey;
   try {
-    const sig = await sendAndConfirmTransaction(conn, tx2a, [authority, dUsdyReserveKp]);
-    console.log(`  dUSDY reserve created: ${sig}`);
+    testUsdcMint = await createMint(
+      conn, authority, authority.publicKey, null, 6, undefined, { commitment: "confirmed" }
+    );
+    console.log(`  Test USDC mint: ${testUsdcMint.toBase58()}`);
   } catch (e: any) {
-    console.error(`  dUSDY reserve failed: ${e.message}`);
+    console.error(`  Failed to create test USDC mint: ${e.message}`);
+    return;
   }
 
-  // USDC reserve (Token Program)
-  // First create a devnet USDC mint
-  // (skipped for brevity — in practice use spl-token create-token on devnet)
+  // Create ATA and mint seed tokens for USDC
+  const usdcAta = await getOrCreateAssociatedTokenAccount(
+    conn, authority, testUsdcMint, authority.publicKey, false, "confirmed"
+  );
+  console.log(`  USDC ATA: ${usdcAta.address.toBase58()}`);
+
+  // Mint 1000 USDC (1_000_000_000 with 6 decimals) for seed deposit
+  await mintTo(conn, authority, testUsdcMint, usdcAta.address, authority, 1_000_000_000);
+  console.log("  Minted 1000 test USDC to ATA");
+
+  // USDC reserve (Token Program) — using our test mint
   const tx2b = new Transaction().add(
     ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 }),
     SystemProgram.createAccount({
@@ -378,7 +397,8 @@ async function main() {
       authority.publicKey,
       marketKp.publicKey,
       usdcReserveKp.publicKey,
-      devnetUsdcMintKp.publicKey,
+      testUsdcMint,
+      usdcAta.address,
       TOKEN_PROGRAM_ID
     )
   );
@@ -390,33 +410,18 @@ async function main() {
     console.error(`  USDC reserve failed: ${e.message}`);
   }
 
+  // dUSDY reserve (Token-2022)
+  // Note: dUSDY mint exists but we haven't minted any tokens yet (requires whitelist flow).
+  // We skip dUSDY reserve init for now — it will be added after governor whitelisting.
+  console.log("\n  NOTE: Skipping dUSDY reserve — requires minting dUSDY via governor whitelist flow.");
+  console.log("  Run add_participant + mint_wrapped first, then init dUSDY reserve separately.");
+
   // ---------------------------------------------------------------------------
   // Step 3: Configure reserves
   // ---------------------------------------------------------------------------
   console.log("\n--- Step 3: Configure reserves ---");
 
   const market = marketKp.publicKey;
-
-  // dUSDY config batch
-  const dUsdyConfigs = [
-    { mode: CONFIG_MODE.UpdatePythPrice, value: pubkeyBuf(PYTH_USDY_DEVNET) },
-    { mode: CONFIG_MODE.UpdateLoanToValuePct, value: u8Buf(75) },
-    { mode: CONFIG_MODE.UpdateLiquidationThresholdPct, value: u8Buf(82) },
-    { mode: CONFIG_MODE.UpdateDepositLimit, value: u64Buf(100_000_000_000n) },
-    { mode: CONFIG_MODE.UpdateBorrowLimit, value: u64Buf(0n) },
-  ];
-
-  for (const { mode, value } of dUsdyConfigs) {
-    const tx = new Transaction().add(
-      buildUpdateReserveConfig(authority.publicKey, market, dUsdyReserveKp.publicKey, mode, value)
-    );
-    try {
-      await sendAndConfirmTransaction(conn, tx, [authority]);
-      console.log(`  dUSDY config mode ${mode}: OK`);
-    } catch (e: any) {
-      console.error(`  dUSDY config mode ${mode}: ${e.message}`);
-    }
-  }
 
   // USDC config batch
   const usdcConfigs = [
@@ -429,6 +434,8 @@ async function main() {
 
   for (const { mode, value } of usdcConfigs) {
     const tx = new Transaction().add(
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+      ComputeBudgetProgram.requestHeapFrame({ bytes: 256 * 1024 }),
       buildUpdateReserveConfig(authority.publicKey, market, usdcReserveKp.publicKey, mode, value)
     );
     try {
@@ -476,7 +483,8 @@ async function main() {
     market: marketKp.publicKey.toBase58(),
     reserves: {
       dUSDY: {
-        address: dUsdyReserveKp.publicKey.toBase58(),
+        status: "pending — needs mint_wrapped via governor first",
+        reserveKeypair: dUsdyReserveKp.publicKey.toBase58(),
         mint: wrappedMint.toBase58(),
         oracle: PYTH_USDY_DEVNET.toBase58(),
         tokenProgram: "Token-2022",
@@ -485,11 +493,12 @@ async function main() {
       },
       USDC: {
         address: usdcReserveKp.publicKey.toBase58(),
-        mint: devnetUsdcMintKp.publicKey.toBase58(),
+        mint: testUsdcMint.toBase58(),
         oracle: usdcOracleAddr.toBase58(),
         tokenProgram: "Token Program",
         role: "borrow",
         borrowLimit: "75,000 USDC",
+        note: "Uses test USDC mint (we control mint authority)",
       },
     },
     governor: {

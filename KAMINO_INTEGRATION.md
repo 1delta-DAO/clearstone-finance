@@ -305,30 +305,78 @@ This is tracked as a future enhancement — the whitelisted bot approach works f
 - **Future:** Transfer hook for fully permissionless KYC-gated liquidation
 
 ### 5. Production Deployment
-- [ ] Deploy delta-mint program to devnet
-- [ ] Create dUSDY mint on devnet
-- [ ] Create Kamino market on devnet via `kamino-manager`
-- [ ] Initialize and configure reserves
+- [x] Deploy delta-mint program to devnet
+- [x] Deploy governor program to devnet
+- [x] Create dUSDY mint on devnet (Token-2022 w/ confidential transfer)
+- [x] Create Kamino lending market on devnet
+- [x] Initialize USDC borrow reserve
+- [x] Initialize dUSDY collateral reserve
+- [x] Configure reserve oracles (Pyth USDY + mock USDC)
+- [x] Configure reserve parameters (LTV, liquidation threshold, borrow rate curve)
+- [x] Whitelist authority wallet as Holder
+- [x] Mint dUSDY tokens via governor
 - [ ] Set up KYC whitelist management (API/dashboard)
-- [ ] End-to-end testing on devnet
+- [ ] End-to-end deposit/borrow testing on devnet
 - [ ] Security audit
 - [ ] Transfer market ownership to multisig
+- [ ] Mainnet deployment
 
 ---
 
-## Running
+## Deployment
+
+### Full Pipeline (from scratch)
 
 ```bash
-# Build the program
 cd packages/programs
-anchor build -p delta_mint
 
-# Run unit tests (local validator)
-anchor test
+# One command to build + deploy + configure everything
+pnpm deploy:all:devnet
 
-# Run fork tests (requires mainnet RPC)
-ANCHOR_PROVIDER_URL=https://api.mainnet-beta.solana.com \
-  npx ts-mocha -p ./tsconfig.json -t 1000000 tests/kamino-market.fork.ts
+# Or step by step:
+pnpm build                  # Build Anchor programs
+pnpm deploy:devnet          # Deploy program binaries to devnet
+pnpm devnet:full            # Oracles + governor pool + lending market
+pnpm devnet:complete        # Whitelist + mint + dUSDY reserve + config
+```
+
+### Individual Steps
+
+```bash
+pnpm devnet:oracles         # Create mock USDC oracle on devnet
+pnpm devnet:governor        # Initialize governor pool + dUSDY mint
+pnpm devnet:market          # Create klend market + USDC reserve
+pnpm devnet:complete        # Whitelist, mint dUSDY, init dUSDY reserve, configure
+```
+
+### Devnet Addresses (current deployment)
+
+| Component | Address |
+|---|---|
+| delta-mint program | `13Su8nR5NBzQ7UwFFUiNAH1zH5DQtLyjezhbwRREQkEn` |
+| governor program | `BrZYcbPBt9nW4b6xUSodwXRfAfRNZTCzthp1ywMG3KJh` |
+| dUSDY mint (Token-2022) | `ALqRkS5GdVYWUFLzsL3xbKCxkoMxe2p23UUP9Waddwfx` |
+| Governor pool | `5dkknYzVfeVdwNSxR1gUXTz2mKoXEtFhZ8jnDCduFRpb` |
+| Lending market | `3LDsUGQzaHuaPwirk5Ty38rsB6XKKrHKjvWzYFygBpQ6` |
+| USDC reserve | `5jtmhs5T4JtparKJs6QDxega3v16vLzvNkXq2CzE23vw` |
+| dUSDY reserve | `BRpvzwVmBBzLSU7ZcJgeoSNbcwJ8fvvC9Zy2Avqoj1L1` |
+| USDY oracle (Pyth V2) | `E4pitSrZV9MWSspahe2vr26Cwsn3podnvHvW3cuT74R4` |
+
+### Environment
+
+Copy `.env.example` to `.env` and fill in your values. See `configs/devnet/` for deployed addresses.
+
+### Testing
+
+```bash
+# Unit tests (local validator)
+pnpm test
+
+# Fork tests (requires mainnet RPC)
+pnpm test:fork
+
+# Full flow test with solana-test-validator
+pnpm test:full-flow:validator
 ```
 
 ---
