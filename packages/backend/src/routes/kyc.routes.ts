@@ -4,6 +4,7 @@ import {
   ValidationError,
   NotFoundError,
   ConflictError,
+  ComplianceError,
 } from "../services/kyc.service.js";
 import type { SubmitKycBody, ApproveRejectBody } from "../types.js";
 
@@ -11,7 +12,8 @@ function errorResponse(err: unknown): { statusCode: number; error: string } {
   if (
     err instanceof ValidationError ||
     err instanceof NotFoundError ||
-    err instanceof ConflictError
+    err instanceof ConflictError ||
+    err instanceof ComplianceError
   ) {
     return { statusCode: err.statusCode, error: err.message };
   }
