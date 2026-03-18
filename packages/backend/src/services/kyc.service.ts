@@ -128,6 +128,19 @@ export class KycService {
     return record;
   }
 
+  /** Returns null instead of throwing when no record exists. */
+  getStatusOrNull(walletAddress: string): KycRecord | null {
+    return this.store.findByWallet(walletAddress) ?? null;
+  }
+
+  findByEntraSub(entraSubjectId: string): KycRecord | null {
+    return this.store.findByEntraSub(entraSubjectId) ?? null;
+  }
+
+  linkEntraSub(walletAddress: string, entraSubjectId: string): KycRecord | null {
+    return this.store.linkEntraSub(walletAddress, entraSubjectId) ?? null;
+  }
+
   // -------------------------------------------------------------------------
   // Approve — KYT → Risk → on-chain whitelist
   // -------------------------------------------------------------------------

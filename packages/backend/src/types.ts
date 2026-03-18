@@ -11,6 +11,14 @@ export interface KycRecord {
   // One entry per mint in WRAPPED_MINT_ADDRESSES.
   whitelistResults?: Array<{ mintAddress: string; signature: string; whitelistEntryAddress: string }>;
 
+  /**
+   * Microsoft Entra B2C subject ID (`sub` claim) — immutable per-app user
+   * identifier. Set when the user calls POST /auth/link-wallet with a valid
+   * Entra Bearer token. Links the verified institutional identity to this
+   * wallet address.
+   */
+  entraSubjectId?: string;
+
   createdAt: string;    // ISO timestamp
   updatedAt: string;
 }

@@ -6,6 +6,7 @@ import { kytRoutes } from "./routes/kyt.routes.js";
 import { travelRuleRoutes } from "./routes/travel-rule.routes.js";
 import { auditRoutes } from "./routes/audit.routes.js";
 import { riskRoutes } from "./routes/risk.routes.js";
+import { authRoutes } from "./routes/auth.routes.js";
 import { config } from "./config.js";
 
 const app = Fastify({ logger: true });
@@ -32,6 +33,7 @@ app.get("/health", async () => ({
   timestamp: new Date().toISOString(),
 }));
 
+await app.register(authRoutes);
 await app.register(kycRoutes);
 await app.register(kytRoutes);
 await app.register(travelRuleRoutes);

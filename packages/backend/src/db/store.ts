@@ -12,6 +12,8 @@ export interface KycStore {
     record: Omit<KycRecord, "createdAt" | "updatedAt">
   ): KycRecord;
   findByWallet(walletAddress: string): KycRecord | undefined;
+  findByEntraSub(entraSubjectId: string): KycRecord | undefined;
+  linkEntraSub(walletAddress: string, entraSubjectId: string): KycRecord | undefined;
   updateStatus(
     walletAddress: string,
     status: KycStatus,
@@ -41,6 +43,21 @@ class InMemoryKycStore implements KycStore {
 
   findByWallet(walletAddress: string): KycRecord | undefined {
     return this.records.get(walletAddress);
+  }
+
+  findByEntraSub(entraSubjectId: string): KycRecord | undefined {
+    for (const record of this.records.values()) {
+      if (record.entraSubjectId === entraSubjectId) return record;
+    }
+    return undefined;
+  }
+
+  linkEntraSub(walletAddress: string, entraSubjectId: string): KycRecord | undefined {
+    const record = this.records.get(walletAddress);
+    if (!record) return undefined;
+    record.entraSubjectId = entraSubjectId;
+    record.updatedAt = new Date().toISOString();
+    return record;
   }
 
   updateStatus(

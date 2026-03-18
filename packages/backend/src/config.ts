@@ -44,6 +44,21 @@ export const config = {
   depositCapUsd: parseInt(process.env.DEPOSIT_CAP_USD ?? "1000000", 10),
   poolCapUsd: parseInt(process.env.POOL_CAP_USD ?? "50000000", 10),
 
+  // Microsoft Entra B2C
+  entra: {
+    // The tenant subdomain: <tenantName>.onmicrosoft.com / <tenantName>.b2clogin.com
+    tenantName: process.env.ENTRA_TENANT_NAME ?? "",
+    // The Azure AD tenant GUID (found in Azure portal → Overview)
+    tenantId: process.env.ENTRA_TENANT_ID ?? "",
+    // App registration Client ID (the audience your tokens are issued for)
+    clientId: process.env.ENTRA_CLIENT_ID ?? "",
+    // B2C user flow / custom policy name, e.g. "B2C_1_signupsignin"
+    // Only used when flavor=b2c
+    policy: process.env.ENTRA_POLICY ?? "B2C_1_signupsignin",
+    // "b2c" (classic, default) or "external" (new Entra External ID tenants created after May 2025)
+    flavor: (process.env.ENTRA_FLAVOR ?? "b2c") as "b2c" | "external",
+  },
+
   // Fireblocks (optional — leave blank to use local keypair)
   fireblocksApiKey: process.env.FIREBLOCKS_API_KEY ?? "",
   fireblocksVaultAccountId: process.env.FIREBLOCKS_VAULT_ACCOUNT_ID ?? "0",
