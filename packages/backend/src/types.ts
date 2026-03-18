@@ -42,6 +42,9 @@ export interface KytResult {
   providerRef?: string;
 }
 
+export type KytRecord = KytResult;
+
+
 // ---------------------------------------------------------------------------
 // Risk Controls
 // ---------------------------------------------------------------------------
