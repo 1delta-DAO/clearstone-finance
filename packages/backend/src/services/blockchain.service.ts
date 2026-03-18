@@ -12,19 +12,21 @@
  * Multi-pool: addToWhitelist / removeFromWhitelist operate across ALL
  * configured mints in WRAPPED_MINT_ADDRESSES so one KYC approval grants
  * access to every pool simultaneously.
+ *
+ * Transaction signing is delegated to SigningService — swap LocalKeypairSigner
+ * for FireblocksSigner by setting FIREBLOCKS_API_KEY in the environment.
  */
 
 import {
   Connection,
-  Keypair,
   PublicKey,
   SystemProgram,
   Transaction,
   TransactionInstruction,
-  sendAndConfirmTransaction,
 } from "@solana/web3.js";
 import crypto from "crypto";
 import { config } from "../config.js";
+import { getSigningService, type SigningService } from "./signing.service.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -72,13 +74,13 @@ export interface BlockchainService {
 
 class SolanaBlockchainService implements BlockchainService {
   private readonly connection: Connection;
-  private readonly adminKeypair: Keypair;
+  private readonly signer: SigningService;
   private readonly programId: PublicKey;
   private readonly mintPubkeys: PublicKey[];
 
-  constructor() {
+  constructor(signer?: SigningService) {
     this.connection = new Connection(config.rpcUrl, "confirmed");
-    this.adminKeypair = config.adminKeypair;
+    this.signer = signer ?? getSigningService();
     this.programId = new PublicKey(config.deltaMintProgramId);
     this.mintPubkeys = config.wrappedMintAddresses.map((a) => new PublicKey(a));
   }
@@ -108,6 +110,25 @@ class SolanaBlockchainService implements BlockchainService {
       this.programId
     );
     return pda;
+  }
+
+  private async sendTx(tx: Transaction): Promise<string> {
+    const { blockhash, lastValidBlockHeight } =
+      await this.connection.getLatestBlockhash("confirmed");
+    tx.recentBlockhash = blockhash;
+    tx.lastValidBlockHeight = lastValidBlockHeight;
+    tx.feePayer = this.signer.publicKey();
+
+    const signed = await this.signer.sign(tx);
+    const raw = signed.serialize();
+    const signature = await this.connection.sendRawTransaction(raw, {
+      skipPreflight: false,
+    });
+    await this.connection.confirmTransaction(
+      { signature, blockhash, lastValidBlockHeight },
+      "confirmed"
+    );
+    return signature;
   }
 
   async isWhitelisted(walletAddress: string): Promise<boolean> {
@@ -151,7 +172,7 @@ class SolanaBlockchainService implements BlockchainService {
     const ix = new TransactionInstruction({
       programId: this.programId,
       keys: [
-        { pubkey: this.adminKeypair.publicKey, isSigner: true, isWritable: true },
+        { pubkey: this.signer.publicKey(), isSigner: true, isWritable: true },
         { pubkey: mintConfigPDA, isSigner: false, isWritable: true },
         { pubkey: walletPubkey, isSigner: false, isWritable: false },
         { pubkey: whitelistEntryPDA, isSigner: false, isWritable: true },
@@ -160,13 +181,7 @@ class SolanaBlockchainService implements BlockchainService {
       data: discriminator("add_to_whitelist"),
     });
 
-    const tx = new Transaction().add(ix);
-    const signature = await sendAndConfirmTransaction(
-      this.connection,
-      tx,
-      [this.adminKeypair],
-      { commitment: "confirmed" }
-    );
+    const signature = await this.sendTx(new Transaction().add(ix));
 
     console.log(
       `[blockchain] Whitelisted ${walletPubkey.toBase58()} for mint ${mintPubkey.toBase58()} | tx: ${signature}`
@@ -201,20 +216,14 @@ class SolanaBlockchainService implements BlockchainService {
     const ix = new TransactionInstruction({
       programId: this.programId,
       keys: [
-        { pubkey: this.adminKeypair.publicKey, isSigner: true, isWritable: true },
+        { pubkey: this.signer.publicKey(), isSigner: true, isWritable: true },
         { pubkey: mintConfigPDA, isSigner: false, isWritable: true },
         { pubkey: whitelistEntryPDA, isSigner: false, isWritable: true },
       ],
       data: discriminator("remove_from_whitelist"),
     });
 
-    const tx = new Transaction().add(ix);
-    const signature = await sendAndConfirmTransaction(
-      this.connection,
-      tx,
-      [this.adminKeypair],
-      { commitment: "confirmed" }
-    );
+    const signature = await this.sendTx(new Transaction().add(ix));
 
     console.log(
       `[blockchain] Removed ${walletPubkey.toBase58()} from mint ${mintPubkey.toBase58()} | tx: ${signature}`
@@ -235,7 +244,6 @@ export function getBlockchainService(): BlockchainService {
   return _instance;
 }
 
-/** Override for testing. */
 export function setBlockchainService(svc: BlockchainService): void {
   _instance = svc;
 }
