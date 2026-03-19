@@ -21,7 +21,9 @@
     "deploy:all": "bash scripts/deploy-all.sh",
     "deploy:all:devnet": "bash scripts/deploy-all.sh devnet",
     "deploy:all:mainnet": "bash scripts/deploy-all.sh mainnet-beta",
-    "fetch:tokens": "npx tsx scripts/fetch-token-list.ts"
+    "fetch:tokens": "npx tsx scripts/fetch-token-list.ts",
+    "whitelist": "npx tsx scripts/whitelist-wallet.ts",
+    "add-admin": "npx tsx scripts/add-admin.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",
@@ -35,7 +37,9 @@
     "@types/mocha": "^10.0.0",
     "@types/node": "^25.5.0",
     "anchor-bankrun": "^0.5.0",
+    "bip39": "^3.1.0",
     "chai": "^4.4.0",
+    "ed25519-hd-key": "^1.3.0",
     "mocha": "^10.7.0",
     "solana-bankrun": "^0.4.0",
     "ts-mocha": "^10.0.0",

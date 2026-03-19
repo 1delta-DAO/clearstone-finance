@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { PublicKey, SystemProgram, Keypair } from "@solana/web3.js";
 import { TOKEN_2022_PROGRAM_ID, getOrCreateAssociatedTokenAccount } from "@solana/spl-token";
@@ -33,17 +33,20 @@ export default function AdminPanel() {
         config.programs.deltaMint
       );
 
+      const accounts: any = {
+        authority: publicKey,
+        poolConfig: config.pool.poolConfig,
+        adminEntry: isRootAuthority ? null : adminEntry,
+        dmMintConfig: config.pool.dmMintConfig,
+        wallet,
+        whitelistEntry,
+        deltaMintProgram: config.programs.deltaMint,
+        systemProgram: SystemProgram.programId,
+      };
+
       const sig = await (governor.methods as any)
         .addParticipant({ holder: {} })
-        .accounts({
-          authority: publicKey,
-          poolConfig: config.pool.poolConfig,
-          dmMintConfig: config.pool.dmMintConfig,
-          wallet,
-          whitelistEntry,
-          deltaMintProgram: config.programs.deltaMint,
-          systemProgram: SystemProgram.programId,
-        })
+        .accounts(accounts)
         .rpc();
       showStatus(`Whitelisted! Tx: ${sig.slice(0, 20)}...`, "ok");
       setWhitelistAddr("");
@@ -81,19 +84,22 @@ export default function AdminPanel() {
         config.programs.deltaMint
       );
 
+      const mintAccounts: any = {
+        authority: publicKey,
+        poolConfig: config.pool.poolConfig,
+        adminEntry: isRootAuthority ? null : adminEntry,
+        dmMintConfig: config.pool.dmMintConfig,
+        wrappedMint: config.pool.wrappedMint,
+        dmMintAuthority: config.pool.dmMintAuthority,
+        whitelistEntry,
+        destination: ata.address,
+        deltaMintProgram: config.programs.deltaMint,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
+      };
+
       const sig = await (governor.methods as any)
         .mintWrapped(amount)
-        .accounts({
-          authority: publicKey,
-          poolConfig: config.pool.poolConfig,
-          dmMintConfig: config.pool.dmMintConfig,
-          wrappedMint: config.pool.wrappedMint,
-          dmMintAuthority: config.pool.dmMintAuthority,
-          whitelistEntry,
-          destination: ata.address,
-          deltaMintProgram: config.programs.deltaMint,
-          tokenProgram: TOKEN_2022_PROGRAM_ID,
-        })
+        .accounts(mintAccounts)
         .rpc();
       showStatus(`Minted ${mintAmount} dUSDY! Tx: ${sig.slice(0, 20)}...`, "ok");
       setMintAmount("");
@@ -102,6 +108,28 @@ export default function AdminPanel() {
     }
     setLoading(false);
   }, [governor, publicKey, mintRecipient, mintAmount, connection, config]);
+
+  const rootAuthority = "AhKNmBmaeq6XrrEyGnSQne3WeU4SoN7hSAGieTiqPaJX";
+  const isRootAuthority = publicKey?.toBase58() === rootAuthority;
+
+  // Derive admin PDA for current wallet
+  const adminEntry = publicKey ? (() => {
+    const [pda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("admin"), config.pool.poolConfig.toBuffer(), publicKey.toBuffer()],
+      config.programs.governor
+    );
+    return pda;
+  })() : null;
+
+  // Check if wallet is an admin (root or PDA exists)
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (isRootAuthority) { setIsAdmin(true); return; }
+    if (!adminEntry) { setIsAdmin(false); return; }
+    connection.getAccountInfo(adminEntry).then(info => setIsAdmin(!!info)).catch(() => setIsAdmin(false));
+  }, [publicKey, adminEntry, isRootAuthority, connection]);
+
+  const isAuthority = isAdmin === true;
 
   if (!connected) {
     return (
@@ -113,6 +141,23 @@ export default function AdminPanel() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {isAdmin === false && (
+        <div style={{
+          padding: "12px 16px", borderRadius: 6, background: "#3a2a1a",
+          border: "1px solid #ff9800", color: "#ff9800", fontSize: 13,
+        }}>
+          Connected wallet is not an admin. Ask the root authority to run:{" "}
+          <span style={{ fontFamily: "monospace" }}>pnpm add-admin {publicKey?.toBase58()}</span>
+        </div>
+      )}
+      {isAdmin === true && !isRootAuthority && (
+        <div style={{
+          padding: "12px 16px", borderRadius: 6, background: "#1a3a1a",
+          border: "1px solid #4caf50", color: "#4caf50", fontSize: 13,
+        }}>
+          Signed in as delegated admin. You can whitelist and mint.
+        </div>
+      )}
       {status && (
         <div style={{
           padding: "10px 16px",
@@ -139,7 +184,7 @@ export default function AdminPanel() {
             onChange={(e) => setWhitelistAddr(e.target.value)}
             style={inputStyle}
           />
-          <ActionButton label="Whitelist" onClick={handleWhitelist} disabled={loading || !whitelistAddr} />
+          <ActionButton label="Whitelist" onClick={handleWhitelist} disabled={loading || !whitelistAddr || !isAuthority} />
         </div>
       </Card>
 
@@ -162,7 +207,7 @@ export default function AdminPanel() {
             style={{ ...inputStyle, flex: 1 }}
             type="number"
           />
-          <ActionButton label="Mint" onClick={handleMint} disabled={loading || !mintRecipient || !mintAmount} />
+          <ActionButton label="Mint" onClick={handleMint} disabled={loading || !mintRecipient || !mintAmount || !isAuthority} />
         </div>
       </Card>
 

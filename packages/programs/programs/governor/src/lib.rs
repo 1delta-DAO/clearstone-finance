@@ -10,24 +10,17 @@ declare_id!("BrZYcbPBt9nW4b6xUSodwXRfAfRNZTCzthp1ywMG3KJh");
 pub mod governor {
     use super::*;
 
-    /// Step 1: Create a new KYC-gated lending pool.
-    /// Stores the pool config and creates the wrapped Token-2022 mint
-    /// (with confidential transfer extension) via CPI to delta-mint.
-    ///
-    /// After this, call `register_lending_market` once the klend market
-    /// and reserves have been created off-chain.
+    /// Create a new KYC-gated lending pool.
     pub fn initialize_pool(
         ctx: Context<InitializePool>,
         params: PoolParams,
     ) -> Result<()> {
-        // Capture keys before mutable borrow
         let pool_key = ctx.accounts.pool_config.key();
         let authority_key = ctx.accounts.authority.key();
         let underlying_key = ctx.accounts.underlying_mint.key();
         let wrapped_key = ctx.accounts.wrapped_mint.key();
         let dm_config_key = ctx.accounts.dm_mint_config.key();
 
-        // 1. Store pool configuration
         let pool = &mut ctx.accounts.pool_config;
         pool.authority = authority_key;
         pool.underlying_mint = underlying_key;
@@ -42,7 +35,6 @@ pub mod governor {
         pool.bump = ctx.bumps.pool_config;
         pool.status = PoolStatus::Initializing;
 
-        // 2. CPI → delta-mint: create the wrapped Token-2022 mint
         delta_cpi::initialize_mint(
             CpiContext::new(
                 ctx.accounts.delta_mint_program.to_account_info(),
@@ -68,10 +60,10 @@ pub mod governor {
         Ok(())
     }
 
-    /// Step 2: Register the klend market and reserve addresses after off-chain creation.
-    /// Transitions the pool from Initializing → Active.
+    /// Register the klend market and reserve addresses.
+    /// Transitions Initializing → Active. Only root authority.
     pub fn register_lending_market(
-        ctx: Context<UpdatePool>,
+        ctx: Context<RootOnly>,
         lending_market: Pubkey,
         collateral_reserve: Pubkey,
         borrow_reserve: Pubkey,
@@ -81,17 +73,31 @@ pub mod governor {
             pool.status == PoolStatus::Initializing,
             GovernorError::InvalidPoolStatus
         );
-
         pool.lending_market = lending_market;
         pool.collateral_reserve = collateral_reserve;
         pool.borrow_reserve = borrow_reserve;
         pool.status = PoolStatus::Active;
-
         Ok(())
     }
 
-    /// Add a participant (KYC'd holder or liquidator bot) to the pool.
-    /// Delegates to delta-mint's add_to_whitelist or add_liquidator via CPI.
+    /// Add an admin to the pool. Only the root authority can add admins.
+    pub fn add_admin(ctx: Context<ManageAdmin>) -> Result<()> {
+        let admin = &mut ctx.accounts.admin_entry;
+        admin.pool = ctx.accounts.pool_config.key();
+        admin.wallet = ctx.accounts.new_admin.key();
+        admin.added_by = ctx.accounts.authority.key();
+        admin.bump = ctx.bumps.admin_entry;
+        Ok(())
+    }
+
+    /// Remove an admin. Only root authority.
+    pub fn remove_admin(_ctx: Context<RemoveAdmin>) -> Result<()> {
+        // Account is closed by the `close` attribute
+        Ok(())
+    }
+
+    /// Add a participant (KYC'd holder or liquidator bot).
+    /// Can be called by root authority OR any admin.
     pub fn add_participant(
         ctx: Context<AddParticipant>,
         role: ParticipantRole,
@@ -118,7 +124,7 @@ pub mod governor {
     }
 
     /// Mint wrapped tokens to a whitelisted holder.
-    /// Only works when pool is Active and recipient has Holder role.
+    /// Can be called by root authority OR any admin.
     pub fn mint_wrapped(ctx: Context<MintWrapped>, amount: u64) -> Result<()> {
         require!(
             ctx.accounts.pool_config.status == PoolStatus::Active,
@@ -144,11 +150,25 @@ pub mod governor {
         Ok(())
     }
 
-    /// Freeze or unfreeze the pool.
-    pub fn set_pool_status(ctx: Context<UpdatePool>, status: PoolStatus) -> Result<()> {
+    /// Freeze or unfreeze the pool. Only root authority.
+    pub fn set_pool_status(ctx: Context<RootOnly>, status: PoolStatus) -> Result<()> {
         ctx.accounts.pool_config.status = status;
         Ok(())
     }
+}
+
+// ---------------------------------------------------------------------------
+// Helper: check if signer is root authority or has an admin PDA
+// ---------------------------------------------------------------------------
+
+fn is_authorized(signer: &Pubkey, pool_authority: &Pubkey, pool_key: &Pubkey, admin_entry: &Option<Account<AdminEntry>>) -> bool {
+    if signer == pool_authority {
+        return true;
+    }
+    if let Some(admin) = admin_entry {
+        return admin.wallet == *signer && admin.pool == *pool_key;
+    }
+    false
 }
 
 // ---------------------------------------------------------------------------
@@ -169,18 +189,17 @@ pub struct InitializePool<'info> {
     )]
     pub pool_config: Account<'info, PoolConfig>,
 
-    /// CHECK: The underlying token mint (e.g., USDY). Stored for reference only.
+    /// CHECK: The underlying token mint (e.g., USDY).
     pub underlying_mint: UncheckedAccount<'info>,
 
-    /// New Token-2022 mint keypair for the KYC-wrapped token.
     #[account(mut)]
     pub wrapped_mint: Signer<'info>,
 
-    /// CHECK: delta-mint MintConfig PDA — created and validated by delta-mint CPI.
+    /// CHECK: delta-mint MintConfig PDA.
     #[account(mut)]
     pub dm_mint_config: UncheckedAccount<'info>,
 
-    /// CHECK: delta-mint mint authority PDA — validated by delta-mint CPI.
+    /// CHECK: delta-mint mint authority PDA.
     pub dm_mint_authority: UncheckedAccount<'info>,
 
     pub delta_mint_program: Program<'info, DeltaMintProgram>,
@@ -188,8 +207,9 @@ pub struct InitializePool<'info> {
     pub system_program: Program<'info, System>,
 }
 
+/// Root-authority-only operations (register market, freeze, manage admins).
 #[derive(Accounts)]
-pub struct UpdatePool<'info> {
+pub struct RootOnly<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
 
@@ -197,19 +217,72 @@ pub struct UpdatePool<'info> {
     pub pool_config: Account<'info, PoolConfig>,
 }
 
+/// Add a new admin — root authority only.
 #[derive(Accounts)]
-pub struct AddParticipant<'info> {
+pub struct ManageAdmin<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
 
     #[account(has_one = authority)]
     pub pool_config: Account<'info, PoolConfig>,
 
-    /// CHECK: delta-mint MintConfig — validated by delta-mint CPI.
+    /// CHECK: The wallet to grant admin role.
+    pub new_admin: UncheckedAccount<'info>,
+
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + AdminEntry::INIT_SPACE,
+        seeds = [b"admin", pool_config.key().as_ref(), new_admin.key().as_ref()],
+        bump,
+    )]
+    pub admin_entry: Account<'info, AdminEntry>,
+
+    pub system_program: Program<'info, System>,
+}
+
+/// Remove an admin — root authority only.
+#[derive(Accounts)]
+pub struct RemoveAdmin<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(has_one = authority)]
+    pub pool_config: Account<'info, PoolConfig>,
+
+    #[account(
+        mut,
+        close = authority,
+        seeds = [b"admin", pool_config.key().as_ref(), admin_entry.wallet.as_ref()],
+        bump = admin_entry.bump,
+    )]
+    pub admin_entry: Account<'info, AdminEntry>,
+}
+
+/// Add participant — root authority OR admin.
+#[derive(Accounts)]
+pub struct AddParticipant<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        constraint = is_authorized(
+            &authority.key(),
+            &pool_config.authority,
+            &pool_config.key(),
+            &admin_entry,
+        ) @ GovernorError::Unauthorized
+    )]
+    pub pool_config: Account<'info, PoolConfig>,
+
+    /// Optional admin PDA. Pass if signer is not root authority.
+    pub admin_entry: Option<Account<'info, AdminEntry>>,
+
+    /// CHECK: delta-mint MintConfig.
     #[account(mut, address = pool_config.dm_mint_config)]
     pub dm_mint_config: UncheckedAccount<'info>,
 
-    /// CHECK: The wallet to whitelist — does not need to sign.
+    /// CHECK: The wallet to whitelist.
     pub wallet: UncheckedAccount<'info>,
 
     /// CHECK: WhitelistEntry PDA — created by delta-mint CPI.
@@ -220,29 +293,40 @@ pub struct AddParticipant<'info> {
     pub system_program: Program<'info, System>,
 }
 
+/// Mint wrapped tokens — root authority OR admin.
 #[derive(Accounts)]
 pub struct MintWrapped<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
 
-    #[account(has_one = authority)]
+    #[account(
+        constraint = is_authorized(
+            &authority.key(),
+            &pool_config.authority,
+            &pool_config.key(),
+            &admin_entry,
+        ) @ GovernorError::Unauthorized
+    )]
     pub pool_config: Account<'info, PoolConfig>,
 
-    /// CHECK: delta-mint MintConfig — validated by address constraint.
+    /// Optional admin PDA. Pass if signer is not root authority.
+    pub admin_entry: Option<Account<'info, AdminEntry>>,
+
+    /// CHECK: delta-mint MintConfig.
     #[account(address = pool_config.dm_mint_config)]
     pub dm_mint_config: UncheckedAccount<'info>,
 
-    /// CHECK: Wrapped Token-2022 mint — validated by address constraint.
+    /// CHECK: Wrapped Token-2022 mint.
     #[account(mut, address = pool_config.wrapped_mint)]
     pub wrapped_mint: UncheckedAccount<'info>,
 
-    /// CHECK: delta-mint mint authority PDA — validated by delta-mint CPI.
+    /// CHECK: delta-mint mint authority PDA.
     pub dm_mint_authority: UncheckedAccount<'info>,
 
     /// CHECK: WhitelistEntry — validated by delta-mint CPI.
     pub whitelist_entry: UncheckedAccount<'info>,
 
-    /// CHECK: Recipient token account — validated by delta-mint CPI.
+    /// CHECK: Recipient token account.
     #[account(mut)]
     pub destination: UncheckedAccount<'info>,
 
@@ -257,45 +341,36 @@ pub struct MintWrapped<'info> {
 #[account]
 #[derive(InitSpace)]
 pub struct PoolConfig {
-    /// Pool authority (can whitelist, mint, configure).
     pub authority: Pubkey,
-    /// Underlying token (e.g., USDY).
     pub underlying_mint: Pubkey,
-    /// Pyth oracle for the underlying token.
     pub underlying_oracle: Pubkey,
-    /// Borrow asset (e.g., USDC).
     pub borrow_mint: Pubkey,
-    /// Pyth oracle for the borrow asset.
     pub borrow_oracle: Pubkey,
-    /// The KYC-wrapped Token-2022 mint (e.g., dUSDY).
     pub wrapped_mint: Pubkey,
-    /// delta-mint MintConfig PDA for the wrapped token.
     pub dm_mint_config: Pubkey,
-    /// Kamino lending market address (set after off-chain creation).
     pub lending_market: Pubkey,
-    /// Kamino collateral reserve (wrapped token).
     pub collateral_reserve: Pubkey,
-    /// Kamino borrow reserve (e.g., USDC).
     pub borrow_reserve: Pubkey,
-    /// Token decimals.
     pub decimals: u8,
-    /// Loan-to-value percentage.
     pub ltv_pct: u8,
-    /// Liquidation threshold percentage.
     pub liquidation_threshold_pct: u8,
-    /// Pool lifecycle status.
     pub status: PoolStatus,
-    /// PDA bump.
+    pub bump: u8,
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct AdminEntry {
+    pub pool: Pubkey,
+    pub wallet: Pubkey,
+    pub added_by: Pubkey,
     pub bump: u8,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, InitSpace)]
 pub enum PoolStatus {
-    /// Pool created, wrapped mint ready, klend market not yet registered.
     Initializing,
-    /// Fully configured — minting and lending active.
     Active,
-    /// Emergency freeze — no new mints or deposits.
     Frozen,
 }
 
@@ -337,4 +412,6 @@ pub enum GovernorError {
     InvalidPoolStatus,
     #[msg("Pool is not active — register lending market first")]
     PoolNotActive,
+    #[msg("Signer is not the pool authority or an approved admin")]
+    Unauthorized,
 }

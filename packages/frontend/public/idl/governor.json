@@ -8,10 +8,73 @@
   },
   "instructions": [
     {
+      "name": "add_admin",
+      "docs": [
+        "Add an admin to the pool. Only the root authority can add admins."
+      ],
+      "discriminator": [
+        177,
+        236,
+        33,
+        205,
+        124,
+        152,
+        55,
+        186
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "pool_config"
+          ]
+        },
+        {
+          "name": "pool_config"
+        },
+        {
+          "name": "new_admin"
+        },
+        {
+          "name": "admin_entry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  100,
+                  109,
+                  105,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_config"
+              },
+              {
+                "kind": "account",
+                "path": "new_admin"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "add_participant",
       "docs": [
-        "Add a participant (KYC'd holder or liquidator bot) to the pool.",
-        "Delegates to delta-mint's add_to_whitelist or add_liquidator via CPI."
+        "Add a participant (KYC'd holder or liquidator bot).",
+        "Can be called by root authority OR any admin."
       ],
       "discriminator": [
         153,
@@ -27,13 +90,17 @@
         {
           "name": "authority",
           "writable": true,
-          "signer": true,
-          "relations": [
-            "pool_config"
-          ]
+          "signer": true
         },
         {
           "name": "pool_config"
+        },
+        {
+          "name": "admin_entry",
+          "docs": [
+            "Optional admin PDA. Pass if signer is not root authority."
+          ],
+          "optional": true
         },
         {
           "name": "dm_mint_config",
@@ -69,12 +136,7 @@
     {
       "name": "initialize_pool",
       "docs": [
-        "Step 1: Create a new KYC-gated lending pool.",
-        "Stores the pool config and creates the wrapped Token-2022 mint",
-        "(with confidential transfer extension) via CPI to delta-mint.",
-        "",
-        "After this, call `register_lending_market` once the klend market",
-        "and reserves have been created off-chain."
+        "Create a new KYC-gated lending pool."
       ],
       "discriminator": [
         95,
@@ -118,9 +180,6 @@
         },
         {
           "name": "wrapped_mint",
-          "docs": [
-            "New Token-2022 mint keypair for the KYC-wrapped token."
-          ],
           "writable": true,
           "signer": true
         },
@@ -158,7 +217,7 @@
       "name": "mint_wrapped",
       "docs": [
         "Mint wrapped tokens to a whitelisted holder.",
-        "Only works when pool is Active and recipient has Holder role."
+        "Can be called by root authority OR any admin."
       ],
       "discriminator": [
         130,
@@ -174,13 +233,17 @@
         {
           "name": "authority",
           "writable": true,
-          "signer": true,
-          "relations": [
-            "pool_config"
-          ]
+          "signer": true
         },
         {
           "name": "pool_config"
+        },
+        {
+          "name": "admin_entry",
+          "docs": [
+            "Optional admin PDA. Pass if signer is not root authority."
+          ],
+          "optional": true
         },
         {
           "name": "dm_mint_config"
@@ -217,8 +280,8 @@
     {
       "name": "register_lending_market",
       "docs": [
-        "Step 2: Register the klend market and reserve addresses after off-chain creation.",
-        "Transitions the pool from Initializing → Active."
+        "Register the klend market and reserve addresses.",
+        "Transitions Initializing → Active. Only root authority."
       ],
       "discriminator": [
         55,
@@ -260,9 +323,66 @@
       ]
     },
     {
+      "name": "remove_admin",
+      "docs": [
+        "Remove an admin. Only root authority."
+      ],
+      "discriminator": [
+        74,
+        202,
+        71,
+        106,
+        252,
+        31,
+        72,
+        183
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "pool_config"
+          ]
+        },
+        {
+          "name": "pool_config"
+        },
+        {
+          "name": "admin_entry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  100,
+                  109,
+                  105,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_config"
+              },
+              {
+                "kind": "account",
+                "path": "admin_entry.wallet",
+                "account": "AdminEntry"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "set_pool_status",
       "docs": [
-        "Freeze or unfreeze the pool."
+        "Freeze or unfreeze the pool. Only root authority."
       ],
       "discriminator": [
         112,
@@ -302,6 +422,19 @@
   ],
   "accounts": [
     {
+      "name": "AdminEntry",
+      "discriminator": [
+        253,
+        36,
+        78,
+        119,
+        205,
+        167,
+        16,
+        68
+      ]
+    },
+    {
       "name": "PoolConfig",
       "discriminator": [
         26,
@@ -340,9 +473,38 @@
       "code": 6001,
       "name": "PoolNotActive",
       "msg": "Pool is not active — register lending market first"
+    },
+    {
+      "code": 6002,
+      "name": "Unauthorized",
+      "msg": "Signer is not the pool authority or an approved admin"
     }
   ],
   "types": [
+    {
+      "name": "AdminEntry",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "added_by",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
     {
       "name": "ParticipantRole",
       "type": {
@@ -364,100 +526,58 @@
         "fields": [
           {
             "name": "authority",
-            "docs": [
-              "Pool authority (can whitelist, mint, configure)."
-            ],
             "type": "pubkey"
           },
           {
             "name": "underlying_mint",
-            "docs": [
-              "Underlying token (e.g., USDY)."
-            ],
             "type": "pubkey"
           },
           {
             "name": "underlying_oracle",
-            "docs": [
-              "Pyth oracle for the underlying token."
-            ],
             "type": "pubkey"
           },
           {
             "name": "borrow_mint",
-            "docs": [
-              "Borrow asset (e.g., USDC)."
-            ],
             "type": "pubkey"
           },
           {
             "name": "borrow_oracle",
-            "docs": [
-              "Pyth oracle for the borrow asset."
-            ],
             "type": "pubkey"
           },
           {
             "name": "wrapped_mint",
-            "docs": [
-              "The KYC-wrapped Token-2022 mint (e.g., dUSDY)."
-            ],
             "type": "pubkey"
           },
           {
             "name": "dm_mint_config",
-            "docs": [
-              "delta-mint MintConfig PDA for the wrapped token."
-            ],
             "type": "pubkey"
           },
           {
             "name": "lending_market",
-            "docs": [
-              "Kamino lending market address (set after off-chain creation)."
-            ],
             "type": "pubkey"
           },
           {
             "name": "collateral_reserve",
-            "docs": [
-              "Kamino collateral reserve (wrapped token)."
-            ],
             "type": "pubkey"
           },
           {
             "name": "borrow_reserve",
-            "docs": [
-              "Kamino borrow reserve (e.g., USDC)."
-            ],
             "type": "pubkey"
           },
           {
             "name": "decimals",
-            "docs": [
-              "Token decimals."
-            ],
             "type": "u8"
           },
           {
             "name": "ltv_pct",
-            "docs": [
-              "Loan-to-value percentage."
-            ],
             "type": "u8"
           },
           {
             "name": "liquidation_threshold_pct",
-            "docs": [
-              "Liquidation threshold percentage."
-            ],
             "type": "u8"
           },
           {
             "name": "status",
-            "docs": [
-              "Pool lifecycle status."
-            ],
             "type": {
               "defined": {
                 "name": "PoolStatus"
@@ -466,9 +586,6 @@
           },
           {
             "name": "bump",
-            "docs": [
-              "PDA bump."
-            ],
             "type": "u8"
           }
         ]
