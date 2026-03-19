@@ -6,6 +6,7 @@ import {
   ConflictError,
   ComplianceError,
 } from "../services/kyc.service.js";
+import { requireEntraAuth, requireEntraAdmin } from "../middleware/entra-auth.js";
 import type { SubmitKycBody, ApproveRejectBody } from "../types.js";
 
 function errorResponse(err: unknown): { statusCode: number; error: string } {
@@ -27,9 +28,9 @@ export async function kycRoutes(app: FastifyInstance): Promise<void> {
   // -------------------------------------------------------------------------
   // POST /kyc/submit
   // -------------------------------------------------------------------------
-  app.post<{ Body: SubmitKycBody }>("/kyc/submit", async (req, reply) => {
+  app.post<{ Body: SubmitKycBody }>("/kyc/submit", { preHandler: requireEntraAuth }, async (req, reply) => {
     try {
-      const record = await svc.submitKyc(req.body);
+      const record = await svc.submitKyc(req.body, req.entraUser?.sub);
       return reply.status(201).send({ success: true, data: record });
     } catch (err) {
       const { statusCode, error } = errorResponse(err);
@@ -56,7 +57,7 @@ export async function kycRoutes(app: FastifyInstance): Promise<void> {
   // -------------------------------------------------------------------------
   // POST /kyc/approve
   // -------------------------------------------------------------------------
-  app.post<{ Body: ApproveRejectBody }>("/kyc/approve", async (req, reply) => {
+  app.post<{ Body: ApproveRejectBody }>("/kyc/approve", { preHandler: requireEntraAdmin }, async (req, reply) => {
     try {
       const record = await svc.approveWallet(req.body.walletAddress);
       return reply.send({ success: true, data: record });
@@ -69,7 +70,7 @@ export async function kycRoutes(app: FastifyInstance): Promise<void> {
   // -------------------------------------------------------------------------
   // POST /kyc/reject
   // -------------------------------------------------------------------------
-  app.post<{ Body: ApproveRejectBody }>("/kyc/reject", async (req, reply) => {
+  app.post<{ Body: ApproveRejectBody }>("/kyc/reject", { preHandler: requireEntraAdmin }, async (req, reply) => {
     try {
       const record = await svc.rejectWallet(req.body.walletAddress);
       return reply.send({ success: true, data: record });
