@@ -23,7 +23,8 @@
     "deploy:all:mainnet": "bash scripts/deploy-all.sh mainnet-beta",
     "fetch:tokens": "npx tsx scripts/fetch-token-list.ts",
     "whitelist": "npx tsx scripts/whitelist-wallet.ts",
-    "add-admin": "npx tsx scripts/add-admin.ts"
+    "add-admin": "npx tsx scripts/add-admin.ts",
+    "setup-civic": "npx tsx scripts/setup-civic.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",

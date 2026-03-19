@@ -20,3 +20,4 @@ idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build", "delta-mint/idl-bu
 anchor-lang = { workspace = true }
 anchor-spl = { workspace = true }
 delta-mint = { path = "../delta-mint", features = ["cpi"] }
+solana-gateway-anchor = "0.1.3"

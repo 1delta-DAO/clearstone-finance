@@ -3,6 +3,8 @@ use anchor_spl::token_interface;
 use delta_mint::cpi as delta_cpi;
 use delta_mint::cpi::accounts as delta_accounts;
 use delta_mint::program::DeltaMint as DeltaMintProgram;
+use anchor_lang::AccountDeserialize;
+use solana_gateway_anchor::Pass;
 
 declare_id!("BrZYcbPBt9nW4b6xUSodwXRfAfRNZTCzthp1ywMG3KJh");
 
@@ -33,6 +35,7 @@ pub mod governor {
         pool.ltv_pct = params.ltv_pct;
         pool.liquidation_threshold_pct = params.liquidation_threshold_pct;
         pool.bump = ctx.bumps.pool_config;
+        pool.gatekeeper_network = Pubkey::default();
         pool.status = PoolStatus::Initializing;
 
         delta_cpi::initialize_mint(
@@ -150,6 +153,114 @@ pub mod governor {
         Ok(())
     }
 
+    /// Set the Civic gatekeeper network for self-registration.
+    /// Only root authority. Pass Pubkey::default() to disable self-registration.
+    /// Handles migration from pre-v2 PoolConfig accounts (expands if needed).
+    pub fn set_gatekeeper_network(
+        ctx: Context<SetGatekeeperNetwork>,
+        gatekeeper_network: Pubkey,
+    ) -> Result<()> {
+        let account_info = &ctx.accounts.pool_config;
+        let new_size = 8 + PoolConfig::INIT_SPACE;
+
+        require!(
+            account_info.owner == &crate::ID,
+            GovernorError::Unauthorized
+        );
+
+        // Verify authority (at offset 8, first 32 bytes)
+        let data = account_info.try_borrow_data()?;
+        require!(data.len() >= 40, GovernorError::Unauthorized);
+        let stored_authority = Pubkey::try_from(&data[8..40]).unwrap();
+        require!(
+            stored_authority == ctx.accounts.authority.key(),
+            GovernorError::Unauthorized
+        );
+        drop(data);
+
+        // Realloc if needed
+        if account_info.data_len() < new_size {
+            let rent = Rent::get()?;
+            let diff = rent.minimum_balance(new_size).saturating_sub(account_info.lamports());
+            if diff > 0 {
+                anchor_lang::solana_program::program::invoke(
+                    &anchor_lang::solana_program::system_instruction::transfer(
+                        ctx.accounts.authority.key,
+                        account_info.key,
+                        diff,
+                    ),
+                    &[
+                        ctx.accounts.authority.to_account_info(),
+                        account_info.to_account_info(),
+                    ],
+                )?;
+            }
+            account_info.realloc(new_size, false)?;
+        }
+
+        // Write gatekeeper_network at offset (last field)
+        // Layout: disc(8) + 10*pubkey(320) + decimals(1) + ltv(1) + liq_thresh(1)
+        //   + status(1) + bump(1) = 333 bytes, then gatekeeper_network(32)
+        let gk_offset = 8 + 32 * 10 + 5; // = 333
+        let mut data = account_info.try_borrow_mut_data()?;
+        data[gk_offset..gk_offset + 32].copy_from_slice(&gatekeeper_network.to_bytes());
+
+        Ok(())
+    }
+
+    /// Self-register as a KYC'd holder by proving a valid Civic gateway token.
+    /// The user signs and pays for their own whitelist PDA.
+    /// Requires a valid, non-expired Civic pass from the pool's gatekeeper network.
+    pub fn self_register(ctx: Context<SelfRegister>) -> Result<()> {
+        let pool = &ctx.accounts.pool_config;
+
+        // Ensure self-registration is enabled
+        require!(
+            pool.gatekeeper_network != Pubkey::default(),
+            GovernorError::SelfRegisterDisabled
+        );
+
+        // Verify Civic gateway token
+        let gateway_data = ctx.accounts.gateway_token.try_borrow_data()?;
+        let pass = Pass::try_deserialize_unchecked(&mut &gateway_data[..])
+            .map_err(|_| GovernorError::InvalidGatewayToken)?;
+        require!(
+            pass.valid(ctx.accounts.user.key, &pool.gatekeeper_network),
+            GovernorError::InvalidGatewayToken
+        );
+
+        // CPI to delta-mint: whitelist the user via co-authority.
+        // The pool_config PDA signs as the co_authority for delta-mint.
+        let underlying = pool.underlying_mint;
+        let bump = pool.bump;
+        let seeds = &[
+            b"pool".as_ref(),
+            underlying.as_ref(),
+            &[bump],
+        ];
+
+        delta_cpi::add_to_whitelist_with_co_authority(CpiContext::new_with_signer(
+            ctx.accounts.delta_mint_program.to_account_info(),
+            delta_accounts::AddToWhitelistCoAuth {
+                co_authority: ctx.accounts.pool_config.to_account_info(),
+                payer: ctx.accounts.user.to_account_info(),
+                mint_config: ctx.accounts.dm_mint_config.to_account_info(),
+                wallet: ctx.accounts.user.to_account_info(),
+                whitelist_entry: ctx.accounts.whitelist_entry.to_account_info(),
+                system_program: ctx.accounts.system_program.to_account_info(),
+            },
+            &[seeds],
+        ))?;
+
+        emit!(SelfRegisterEvent {
+            pool: ctx.accounts.pool_config.key(),
+            wallet: ctx.accounts.user.key(),
+            gatekeeper_network: pool.gatekeeper_network,
+        });
+
+        Ok(())
+    }
+
     /// Freeze or unfreeze the pool. Only root authority.
     pub fn set_pool_status(ctx: Context<RootOnly>, status: PoolStatus) -> Result<()> {
         ctx.accounts.pool_config.status = status;
@@ -215,6 +326,19 @@ pub struct RootOnly<'info> {
 
     #[account(mut, has_one = authority)]
     pub pool_config: Account<'info, PoolConfig>,
+}
+
+/// Set gatekeeper network — supports pre-v2 account migration.
+#[derive(Accounts)]
+pub struct SetGatekeeperNetwork<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    /// CHECK: PoolConfig PDA — manually validated and reallocated if needed.
+    #[account(mut)]
+    pub pool_config: UncheckedAccount<'info>,
+
+    pub system_program: Program<'info, System>,
 }
 
 /// Add a new admin — root authority only.
@@ -293,6 +417,35 @@ pub struct AddParticipant<'info> {
     pub system_program: Program<'info, System>,
 }
 
+/// Self-register via Civic gateway token — permissionless.
+#[derive(Accounts)]
+pub struct SelfRegister<'info> {
+    /// The user who wants to self-register. They sign and pay rent.
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    /// Pool config — used to read gatekeeper_network and as PDA signer for CPI.
+    #[account(
+        seeds = [b"pool", pool_config.underlying_mint.as_ref()],
+        bump = pool_config.bump,
+    )]
+    pub pool_config: Account<'info, PoolConfig>,
+
+    /// CHECK: Civic gateway token — deserialized and verified in handler via Pass.
+    pub gateway_token: UncheckedAccount<'info>,
+
+    /// CHECK: delta-mint MintConfig — validated by address constraint.
+    #[account(mut, address = pool_config.dm_mint_config)]
+    pub dm_mint_config: UncheckedAccount<'info>,
+
+    /// CHECK: WhitelistEntry PDA — created by delta-mint CPI.
+    #[account(mut)]
+    pub whitelist_entry: UncheckedAccount<'info>,
+
+    pub delta_mint_program: Program<'info, DeltaMintProgram>,
+    pub system_program: Program<'info, System>,
+}
+
 /// Mint wrapped tokens — root authority OR admin.
 #[derive(Accounts)]
 pub struct MintWrapped<'info> {
@@ -356,6 +509,9 @@ pub struct PoolConfig {
     pub liquidation_threshold_pct: u8,
     pub status: PoolStatus,
     pub bump: u8,
+    /// Civic gatekeeper network for self-registration. Pubkey::default() = disabled.
+    /// Added in v2 — must be at end for backwards compatibility with existing accounts.
+    pub gatekeeper_network: Pubkey,
 }
 
 #[account]
@@ -402,6 +558,13 @@ pub struct PoolCreatedEvent {
     pub authority: Pubkey,
 }
 
+#[event]
+pub struct SelfRegisterEvent {
+    pub pool: Pubkey,
+    pub wallet: Pubkey,
+    pub gatekeeper_network: Pubkey,
+}
+
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
@@ -414,4 +577,8 @@ pub enum GovernorError {
     PoolNotActive,
     #[msg("Signer is not the pool authority or an approved admin")]
     Unauthorized,
+    #[msg("Self-registration is not enabled for this pool")]
+    SelfRegisterDisabled,
+    #[msg("Invalid or expired Civic gateway token")]
+    InvalidGatewayToken,
 }

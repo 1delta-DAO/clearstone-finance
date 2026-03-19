@@ -5,6 +5,7 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "dev:frontend": "pnpm --filter frontend dev",
+    "dev:retail": "pnpm --filter retail-frontend dev",
     "dev:backend": "pnpm --filter backend dev",
     "test:programs": "pnpm --filter programs test",
     "build:programs": "pnpm --filter programs build"

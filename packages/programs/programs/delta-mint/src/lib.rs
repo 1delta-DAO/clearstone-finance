@@ -150,6 +150,91 @@ pub mod delta_mint {
         Ok(())
     }
 
+    /// Transfer mint config authority to a new address (e.g., governor PDA).
+    /// Only current authority can call this.
+    pub fn transfer_authority(ctx: Context<TransferAuthority>, new_authority: Pubkey) -> Result<()> {
+        ctx.accounts.mint_config.authority = new_authority;
+        Ok(())
+    }
+
+    /// Add a wallet to the whitelist using a co-signer.
+    /// The co_authority must be registered in mint_config.co_authority.
+    /// This enables permissionless flows where a PDA (e.g., governor pool)
+    /// can whitelist on behalf of the authority.
+    pub fn add_to_whitelist_with_co_authority(ctx: Context<AddToWhitelistCoAuth>) -> Result<()> {
+        let entry = &mut ctx.accounts.whitelist_entry;
+        entry.wallet = ctx.accounts.wallet.key();
+        entry.mint_config = ctx.accounts.mint_config.key();
+        entry.approved = true;
+        entry.role = WhitelistRole::Holder;
+        entry.approved_at = Clock::get()?.unix_timestamp;
+        entry.bump = ctx.bumps.whitelist_entry;
+
+        let config = &mut ctx.accounts.mint_config;
+        config.total_whitelisted = config.total_whitelisted.checked_add(1).unwrap();
+
+        emit!(WhitelistEvent {
+            wallet: entry.wallet,
+            mint: config.mint,
+            approved: true,
+            timestamp: entry.approved_at,
+        });
+
+        Ok(())
+    }
+
+    /// Set a co-authority that can also whitelist wallets.
+    /// Only the main authority can set this. Pass Pubkey::default() to disable.
+    /// Handles migration from pre-v2 MintConfig accounts (expands if needed).
+    pub fn set_co_authority(ctx: Context<SetCoAuthority>, co_authority: Pubkey) -> Result<()> {
+        let account_info = &ctx.accounts.mint_config;
+        let new_size = 8 + MintConfig::INIT_SPACE;
+
+        // Verify owner is this program
+        require!(
+            account_info.owner == &crate::ID,
+            DeltaError::MintInitFailed
+        );
+
+        // Read the authority field (at offset 8, first 32 bytes after discriminator)
+        let data = account_info.try_borrow_data()?;
+        require!(data.len() >= 8 + 32, DeltaError::MintInitFailed);
+        let stored_authority = Pubkey::try_from(&data[8..40]).unwrap();
+        require!(
+            stored_authority == ctx.accounts.authority.key(),
+            DeltaError::NotWhitelisted // reusing error — signer != authority
+        );
+        drop(data);
+
+        // Realloc if needed
+        if account_info.data_len() < new_size {
+            let rent = Rent::get()?;
+            let diff = rent.minimum_balance(new_size).saturating_sub(account_info.lamports());
+            if diff > 0 {
+                invoke(
+                    &system_instruction::transfer(
+                        ctx.accounts.authority.key,
+                        account_info.key,
+                        diff,
+                    ),
+                    &[
+                        ctx.accounts.authority.to_account_info(),
+                        account_info.to_account_info(),
+                    ],
+                )?;
+            }
+            account_info.realloc(new_size, false)?;
+        }
+
+        // Write co_authority at the correct offset (end of struct)
+        // Layout: disc(8) + authority(32) + mint(32) + decimals(1) + bump(1) + mint_auth_bump(1) + total_whitelisted(8) + co_authority(32)
+        let co_auth_offset = 8 + 32 + 32 + 1 + 1 + 1 + 8; // = 83
+        let mut data = account_info.try_borrow_mut_data()?;
+        data[co_auth_offset..co_auth_offset + 32].copy_from_slice(&co_authority.to_bytes());
+
+        Ok(())
+    }
+
     /// Mints tokens to a whitelisted recipient's token account.
     /// Fails if the recipient is not on the KYC whitelist.
     pub fn mint_to(ctx: Context<MintTokens>, amount: u64) -> Result<()> {
@@ -250,6 +335,60 @@ pub struct AddToWhitelist<'info> {
     pub system_program: Program<'info, System>,
 }
 
+/// Whitelist via co-authority (PDA signer from governor).
+#[derive(Accounts)]
+pub struct AddToWhitelistCoAuth<'info> {
+    /// The co-authority (e.g., governor pool PDA). Must match mint_config.co_authority.
+    pub co_authority: Signer<'info>,
+
+    /// The wallet paying rent for the new whitelist entry.
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    #[account(
+        mut,
+        constraint = mint_config.co_authority == co_authority.key() @ DeltaError::NotWhitelisted,
+    )]
+    pub mint_config: Account<'info, MintConfig>,
+
+    /// CHECK: The wallet being whitelisted.
+    pub wallet: UncheckedAccount<'info>,
+
+    #[account(
+        init,
+        payer = payer,
+        space = 8 + WhitelistEntry::INIT_SPACE,
+        seeds = [b"whitelist", mint_config.key().as_ref(), wallet.key().as_ref()],
+        bump,
+    )]
+    pub whitelist_entry: Account<'info, WhitelistEntry>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct TransferAuthority<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(mut, has_one = authority)]
+    pub mint_config: Account<'info, MintConfig>,
+}
+
+/// SetCoAuthority supports migration from pre-v2 accounts (no co_authority field).
+/// We use UncheckedAccount to handle both old (83 byte) and new (115 byte) layouts.
+#[derive(Accounts)]
+pub struct SetCoAuthority<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    /// CHECK: MintConfig PDA — manually validated and reallocated if needed.
+    #[account(mut)]
+    pub mint_config: UncheckedAccount<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
 #[derive(Accounts)]
 pub struct RemoveFromWhitelist<'info> {
     #[account(mut)]
@@ -321,6 +460,10 @@ pub struct MintConfig {
     pub mint_authority_bump: u8,
     /// Number of currently whitelisted wallets.
     pub total_whitelisted: u64,
+    /// Co-authority (e.g., governor PDA) that can also whitelist wallets.
+    /// Pubkey::default() means disabled. Added in v2 — must be at the end
+    /// so existing accounts deserialize correctly (trailing zeros = default).
+    pub co_authority: Pubkey,
 }
 
 #[account]
