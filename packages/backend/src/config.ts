@@ -45,7 +45,7 @@ export const config = {
   poolCapUsd: parseInt(process.env.POOL_CAP_USD ?? "50000000", 10),
 
   // Set to true to skip JWT signature verification (local dev only, never production)
-  entraMock: process.env.ENTRA_MOCK === "true",
+  get entraMock(): boolean { return process.env.ENTRA_MOCK === "true"; },
 
   // Microsoft Entra B2C
   entra: {
