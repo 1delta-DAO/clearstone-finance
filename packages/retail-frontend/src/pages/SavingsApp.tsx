@@ -10,6 +10,7 @@ import { KycGate } from "../components/KycGate";
 import { DepositCard } from "../components/DepositCard";
 import { WithdrawCard } from "../components/WithdrawCard";
 import { PortfolioCard } from "../components/PortfolioCard";
+import { FaucetCard } from "../components/FaucetCard";
 
 export function SavingsApp() {
   const { publicKey, connected } = useWallet();
@@ -36,13 +37,15 @@ export function SavingsApp() {
   }, [publicKey, connected, connection, config]);
 
   // Fetch USDC balance
-  useEffect(() => {
+  const refreshUsdcBalance = useCallback(() => {
     if (!publicKey || !connected) { setUsdcBalance(null); return; }
     const ata = getAssociatedTokenAddressSync(config.usdc.mint, publicKey, false, TOKEN_PROGRAM_ID);
     connection.getTokenAccountBalance(ata)
       .then((bal) => setUsdcBalance(Number(bal.value.uiAmount)))
       .catch(() => setUsdcBalance(0));
   }, [publicKey, connected, connection, config]);
+
+  useEffect(() => { refreshUsdcBalance(); }, [refreshUsdcBalance]);
 
   // Self-register via Civic
   const handleSelfRegister = useCallback(async () => {
@@ -123,6 +126,7 @@ export function SavingsApp() {
               supplyAPY={reserveData.supplyAPY}
             />
             <div style={styles.actionsCol}>
+              <FaucetCard usdcBalance={usdcBalance} onMinted={refreshUsdcBalance} />
               <DepositCard
                 usdcBalance={usdcBalance}
                 config={config}

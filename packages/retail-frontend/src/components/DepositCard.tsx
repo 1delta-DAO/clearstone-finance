@@ -11,7 +11,6 @@ import {
 } from "@solana/spl-token";
 import type { DeploymentConfig } from "../config/devnet";
 import {
-  buildRefreshReserveIx,
   buildDepositReserveLiquidityIx,
   reserveCollateralMint,
 } from "../lib/klend";
@@ -68,8 +67,8 @@ export function DepositCard({ usdcBalance, config, supplyAPY = 0 }: DepositCardP
         );
       }
 
-      // Refresh reserve (required before deposit)
-      tx.add(buildRefreshReserveIx(reserve, market, oracle));
+      // Note: refreshReserve skipped on devnet (Pyth V2 feeds are stale).
+      // Deposits don't require a fresh oracle price.
 
       // Deposit
       tx.add(

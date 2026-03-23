@@ -24,11 +24,13 @@
     "fetch:tokens": "npx tsx scripts/fetch-token-list.ts",
     "whitelist": "npx tsx scripts/whitelist-wallet.ts",
     "add-admin": "npx tsx scripts/add-admin.ts",
-    "setup-civic": "npx tsx scripts/setup-civic.ts"
+    "setup-civic": "npx tsx scripts/setup-civic.ts",
+    "faucet": "npx tsx scripts/mint-test-usdc.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",
-    "@solana/web3.js": "^1.98.0"
+    "@solana/web3.js": "^1.98.0",
+    "bn.js": "^5.2.3"
   },
   "devDependencies": {
     "@kamino-finance/klend-sdk": "^7.3.20",

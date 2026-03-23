@@ -69,6 +69,7 @@ async function main() {
       .accounts({
         authority: authority.publicKey,
         mintConfig: dmMintConfig,
+        systemProgram: SystemProgram.programId,
       })
       .rpc();
     console.log(`  Done: ${sig.slice(0, 30)}...`);

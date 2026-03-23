@@ -67,15 +67,16 @@ export function buildRefreshReserveIx(
   market: PublicKey,
   oracle: PublicKey
 ): TransactionInstruction {
+  // klend requires unused oracle slots to be the klend program ID itself, not PublicKey.default
   return new TransactionInstruction({
     programId: KLEND_PROGRAM,
     keys: [
       { pubkey: reserve, isSigner: false, isWritable: true },
       { pubkey: market, isSigner: false, isWritable: false },
-      { pubkey: oracle, isSigner: false, isWritable: false },           // pyth oracle
-      { pubkey: PublicKey.default, isSigner: false, isWritable: false }, // switchboard price
-      { pubkey: PublicKey.default, isSigner: false, isWritable: false }, // switchboard twap
-      { pubkey: PublicKey.default, isSigner: false, isWritable: false }, // scope prices
+      { pubkey: oracle, isSigner: false, isWritable: false },        // pyth oracle
+      { pubkey: KLEND_PROGRAM, isSigner: false, isWritable: false }, // switchboard price (unused)
+      { pubkey: KLEND_PROGRAM, isSigner: false, isWritable: false }, // switchboard twap (unused)
+      { pubkey: KLEND_PROGRAM, isSigner: false, isWritable: false }, // scope prices (unused)
     ],
     data: REFRESH_RESERVE_DISC,
   });
@@ -197,70 +198,62 @@ export interface ReserveInfo {
 }
 
 export function decodeReserveInfo(data: Buffer): ReserveInfo | null {
-  if (data.length < 600) return null;
+  if (data.length < 5008) return null;
 
-  // ReserveLiquidity.available_amount: u64 at offset 200 (approximate — varies by version)
-  // We need to find the exact offsets. The Reserve struct is large.
-  // For safety, scan for known patterns or use the codegen.
-  //
-  // Simplified approach: read specific offsets based on klend v2 layout.
-  // These offsets are derived from the IDL struct field ordering.
-
-  // Quick offset map for klend Reserve account (anchor disc=8):
-  // 8: version (u64)
-  // 16: last_update.slot (u64)
-  // 24: last_update.stale (u8)
-  // 25: [padding 15 bytes]
-  // 40: lending_market (Pubkey)
-  // -- ReserveLiquidity starts at 72 --
-  // 72: mint_pubkey (Pubkey)
-  // 104: supply_vault (Pubkey)
-  // 136: fee_vault (Pubkey)
-  // 168: available_amount (u64)
-  // 176: borrowed_amount_sf (u128)
-  // 192: cumulative_borrow_rate_bsf.value[0] (u128)
-  //   ... (32 bytes total for bsf)
-  // ...
-  // -- ReserveCollateral starts further in --
-  // After liquidity struct (~400+ bytes in), we have:
-  // collateral.mint_pubkey, collateral.mint_total_supply, collateral.supply_vault
-  //
-  // Since these offsets are fragile, let's use a more robust approach:
-  // Read available_amount and borrowed_amount_sf from the known liquidity section.
+  // Offsets verified against klend devnet reserve D4qXufDqBjU5iTbVMHfdxDrpYnz31sed1oQCJbWoVGmH
+  // Reserve account is 8624 bytes (klend v2).
+  const AVAILABLE_AMOUNT_OFFSET = 224;
+  const BORROWED_SF_OFFSET = 232;       // u128 (16 bytes)
+  const CTOKEN_SUPPLY_OFFSET = 2592;
+  const PROTOCOL_TAKE_RATE_OFFSET = 4853; // config start (4840) + 13
+  const BORROW_CURVE_OFFSET = 4920;      // 11 points × 8 bytes each
 
   try {
-    const availableAmount = data.readBigUInt64LE(168);
-    const borrowedAmountSf = data.readBigUInt64LE(176) | (data.readBigUInt64LE(184) << 64n);
-
-    // Protocol take rate is in ReserveConfig which starts much later.
-    // For MVP, use a default of 10%.
-    const protocolTakeRatePct = 10;
-
-    // cToken mint supply — this is at the collateral section.
-    // ReserveCollateral offset depends on ReserveLiquidity size.
-    // ReserveLiquidity size is approximately 352 bytes (from IDL).
-    // So ReserveCollateral starts at ~72 + 352 = 424
-    // collateral.mint_pubkey: Pubkey at 424
-    // collateral.mint_total_supply: u64 at 456
-    // collateral.supply_vault: Pubkey at 464
-    const cTokenMintSupply = data.readBigUInt64LE(456);
+    const availableAmount = data.readBigUInt64LE(AVAILABLE_AMOUNT_OFFSET);
+    const borrowedAmountSf =
+      data.readBigUInt64LE(BORROWED_SF_OFFSET) |
+      (data.readBigUInt64LE(BORROWED_SF_OFFSET + 8) << 64n);
+    const cTokenMintSupply = data.readBigUInt64LE(CTOKEN_SUPPLY_OFFSET);
+    const protocolTakeRatePct = data[PROTOCOL_TAKE_RATE_OFFSET];
 
     const borrowedAmount = Number(borrowedAmountSf >> SF_SHIFT);
     const available = Number(availableAmount);
     const totalLiquidity = available + borrowedAmount;
-
     const utilization = totalLiquidity > 0 ? borrowedAmount / totalLiquidity : 0;
 
-    // Simplified APY: assume ~5% base borrow rate * utilization * (1 - take rate)
-    // Real implementation would interpolate the borrow rate curve.
-    const borrowRate = 0.05; // 5% base (placeholder until we decode the curve)
-    const supplyAPR = borrowRate * utilization * (1 - protocolTakeRatePct / 100);
-    const supplyAPY = Math.pow(1 + supplyAPR / 252288000, 252288000) - 1; // ~slots/year
+    // Decode borrow rate curve (11 points: {utilization_bps: u32, borrow_rate_bps: u32})
+    const curvePoints: { utilBps: number; rateBps: number }[] = [];
+    for (let i = 0; i < 11; i++) {
+      const off = BORROW_CURVE_OFFSET + i * 8;
+      const utilBps = data.readUInt32LE(off);
+      const rateBps = data.readUInt32LE(off + 4);
+      curvePoints.push({ utilBps, rateBps });
+      if (utilBps >= 10000) break; // 100% utilization = last point
+    }
 
-    const exchangeRate =
-      Number(cTokenMintSupply) > 0
-        ? totalLiquidity / Number(cTokenMintSupply) * 1e6 // adjust for decimals
-        : 1;
+    // Interpolate borrow rate from curve
+    const utilBps = Math.round(utilization * 10000);
+    let borrowRateBps = 0;
+    for (let i = 0; i < curvePoints.length - 1; i++) {
+      const a = curvePoints[i];
+      const b = curvePoints[i + 1];
+      if (utilBps >= a.utilBps && utilBps <= b.utilBps) {
+        const t = b.utilBps === a.utilBps ? 0 : (utilBps - a.utilBps) / (b.utilBps - a.utilBps);
+        borrowRateBps = a.rateBps + t * (b.rateBps - a.rateBps);
+        break;
+      }
+    }
+    if (utilBps >= (curvePoints[curvePoints.length - 1]?.utilBps ?? 10000)) {
+      borrowRateBps = curvePoints[curvePoints.length - 1]?.rateBps ?? 0;
+    }
+
+    const borrowRate = borrowRateBps / 10000; // bps → fraction
+    const supplyAPR = borrowRate * utilization * (1 - protocolTakeRatePct / 100);
+    // Compound per slot (~400ms), ~78.9M slots/year
+    const SLOTS_PER_YEAR = 78_892_314;
+    const supplyAPY = supplyAPR > 0
+      ? Math.pow(1 + supplyAPR / SLOTS_PER_YEAR, SLOTS_PER_YEAR) - 1
+      : 0;
 
     return {
       availableAmount,

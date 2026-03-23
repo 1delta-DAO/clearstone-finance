@@ -8,11 +8,13 @@ skip-lint = false
 counter = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
 delta_mint = "13Su8nR5NBzQ7UwFFUiNAH1zH5DQtLyjezhbwRREQkEn"
 governor = "BrZYcbPBt9nW4b6xUSodwXRfAfRNZTCzthp1ywMG3KJh"
+mock_oracle = "MocKoracLeXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
 
 [programs.devnet]
 counter = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
 delta_mint = "13Su8nR5NBzQ7UwFFUiNAH1zH5DQtLyjezhbwRREQkEn"
 governor = "BrZYcbPBt9nW4b6xUSodwXRfAfRNZTCzthp1ywMG3KJh"
+mock_oracle = "MocKoracLeXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
 
 [registry]
 url = "https://api.apr.dev"
