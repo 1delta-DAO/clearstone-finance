@@ -12,6 +12,7 @@ import {
 import type { DeploymentConfig } from "../config/devnet";
 import {
   buildDepositReserveLiquidityIx,
+  buildRefreshReserveIx,
   reserveCollateralMint,
 } from "../lib/klend";
 
@@ -67,8 +68,10 @@ export function DepositCard({ usdcBalance, config, supplyAPY = 0 }: DepositCardP
         );
       }
 
-      // Note: refreshReserve skipped on devnet (Pyth V2 feeds are stale).
-      // Deposits don't require a fresh oracle price.
+      // RefreshReserve must precede deposit in the same transaction (check_refresh)
+      tx.add(
+        buildRefreshReserveIx(reserve, market, oracle)
+      );
 
       // Deposit
       tx.add(

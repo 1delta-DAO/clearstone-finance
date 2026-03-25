@@ -2,8 +2,9 @@ import { useState } from "react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import AdminPanel from "../pages/AdminPanel";
 import LendingPanel from "../pages/LendingPanel";
+import OraclePanel from "../pages/OraclePanel";
 
-type Tab = "admin" | "lending";
+type Tab = "admin" | "lending" | "oracles";
 
 export default function Layout() {
   const [tab, setTab] = useState<Tab>("admin");
@@ -51,10 +52,24 @@ export default function Layout() {
         >
           Lending
         </button>
+        <button
+          onClick={() => setTab("oracles")}
+          style={{
+            padding: "8px 20px",
+            border: "1px solid #333",
+            borderRadius: 6,
+            background: tab === "oracles" ? "#1a1a2e" : "transparent",
+            color: tab === "oracles" ? "#fff" : "#888",
+            cursor: "pointer",
+            fontWeight: tab === "oracles" ? 600 : 400,
+          }}
+        >
+          Oracles
+        </button>
       </nav>
 
       {/* Content */}
-      {tab === "admin" ? <AdminPanel /> : <LendingPanel />}
+      {tab === "admin" ? <AdminPanel /> : tab === "lending" ? <LendingPanel /> : <OraclePanel />}
     </div>
   );
 }

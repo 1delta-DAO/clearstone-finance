@@ -27,7 +27,8 @@
     "setup-civic": "npx tsx scripts/setup-civic.ts",
     "faucet": "npx tsx scripts/mint-test-usdc.ts",
     "localnet": "bash scripts/start-localnet.sh",
-    "localnet:test": "npx tsx scripts/test-refresh-localnet.ts"
+    "localnet:test": "npx tsx scripts/test-refresh-localnet.ts",
+    "create-token": "npx tsx scripts/create-wrapped-token.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",
