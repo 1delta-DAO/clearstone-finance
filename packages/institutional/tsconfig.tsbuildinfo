@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/main.tsx","./src/components/KycGate.tsx","./src/components/Layout.tsx","./src/config/devnet.ts","./src/hooks/usePrograms.ts","./src/lib/lib/klend.ts","./src/pages/BorrowPage.tsx","./src/pages/CollateralPage.tsx","./src/pages/Dashboard.tsx","./src/pages/PositionsPage.tsx"],"version":"5.9.3"}
