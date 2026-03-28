@@ -30,7 +30,10 @@ export function SavingsApp() {
       config.programs.deltaMint
     );
     connection.getAccountInfo(whitelistEntry).then((info) => {
-      setKycStatus(info ? "approved" : "not_approved");
+      // Validate data length and approved byte (offset 64) before granting access
+      setKycStatus(info && info.data.length >= 65 && info.data[64] === 1 ? "approved" : "not_approved");
+    }).catch(() => {
+      setKycStatus("unknown");
     });
   }, [publicKey, connected, connection, config]);
 

@@ -8,6 +8,7 @@ import { PhantomWalletAdapter } from "@solana/wallet-adapter-wallets";
 import "@solana/wallet-adapter-react-ui/styles.css";
 import "./index.css";
 
+import GeoGate from "./components/GeoGate";
 import Layout from "./components/Layout";
 import KycGate from "./components/KycGate";
 import Dashboard from "./pages/Dashboard";
@@ -23,6 +24,7 @@ export default function App() {
   const [tab, setTab] = useState<"dashboard" | "prepare" | "collateral" | "borrow" | "positions">("dashboard");
 
   return (
+    <GeoGate>
     <ConnectionProvider endpoint={RPC}>
       <WalletProvider wallets={wallets} autoConnect>
         <WalletModalProvider>
@@ -38,5 +40,6 @@ export default function App() {
         </WalletModalProvider>
       </WalletProvider>
     </ConnectionProvider>
+    </GeoGate>
   );
 }

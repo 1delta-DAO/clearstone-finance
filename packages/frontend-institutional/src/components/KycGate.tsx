@@ -2,7 +2,6 @@ import { ReactNode, useState, useEffect, useCallback } from "react";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { PublicKey, Transaction, SystemProgram, SYSVAR_RENT_PUBKEY } from "@solana/web3.js";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
-import * as crypto from "crypto";
 
 const DELTA_MINT = new PublicKey("13Su8nR5NBzQ7UwFFUiNAH1zH5DQtLyjezhbwRREQkEn");
 const GOVERNOR = new PublicKey("BrZYcbPBt9nW4b6xUSodwXRfAfRNZTCzthp1ywMG3KJh");
@@ -18,7 +17,11 @@ const POOLS = [
   { name: "Legacy Pool", pool: "5dkknYzVfeVdwNSxR1gUXTz2mKoXEtFhZ8jnDCduFRpb", dmConfig: "C8XZRejf1vaLRpLWqCZSjegzyAFFdfpBZKXFhs7kSDLs" },
 ];
 
-type KycStatus = "loading" | "not_connected" | "checking" | "approved" | "pending" | "self_whitelisting";
+type KycStatus = "loading" | "not_connected" | "checking" | "approved" | "pending" | "self_whitelisting" | "error";
+
+// Precomputed Anchor discriminator for global:add_participant
+// = sha256("global:add_participant").slice(0, 8)
+const ADD_PARTICIPANT_DISC = new Uint8Array([153, 137, 99, 142, 169, 212, 240, 50]);
 
 export default function KycGate({ children }: { children: ReactNode }) {
   const { publicKey, connected, sendTransaction } = useWallet();
@@ -34,42 +37,43 @@ export default function KycGate({ children }: { children: ReactNode }) {
     setStatus("checking");
     setError(null);
 
-    const approved: string[] = [];
-    let adminFound = false;
+    try {
+      const approved: string[] = [];
+      let adminFound = false;
 
-    for (const pool of POOLS) {
-      // Check whitelist
-      const [whitelistEntry] = PublicKey.findProgramAddressSync(
-        [Buffer.from("whitelist"), new PublicKey(pool.dmConfig).toBuffer(), publicKey.toBuffer()],
-        DELTA_MINT
-      );
-      try {
+      for (const pool of POOLS) {
+        // Check whitelist — validate account data length AND approved byte
+        const [whitelistEntry] = PublicKey.findProgramAddressSync(
+          [Buffer.from("whitelist"), new PublicKey(pool.dmConfig).toBuffer(), publicKey.toBuffer()],
+          DELTA_MINT
+        );
         const info = await connection.getAccountInfo(whitelistEntry);
-        if (info && info.data.length > 0 && info.data[64] === 1) {
+        if (info && info.data.length >= 65 && info.data[64] === 1) {
           approved.push(pool.name);
         }
-      } catch {}
 
-      // Check admin
-      if (!adminFound) {
-        const [adminEntry] = PublicKey.findProgramAddressSync(
-          [Buffer.from("admin"), new PublicKey(pool.pool).toBuffer(), publicKey.toBuffer()],
-          GOVERNOR
-        );
-        try {
-          const info = await connection.getAccountInfo(adminEntry);
-          if (info) adminFound = true;
-        } catch {}
+        // Check admin
+        if (!adminFound) {
+          const [adminEntry] = PublicKey.findProgramAddressSync(
+            [Buffer.from("admin"), new PublicKey(pool.pool).toBuffer(), publicKey.toBuffer()],
+            GOVERNOR
+          );
+          const adminInfo = await connection.getAccountInfo(adminEntry);
+          if (adminInfo) adminFound = true;
+        }
       }
+
+      // Also check if this IS the root authority
+      if (publicKey.toBase58() === ROOT_AUTHORITY) adminFound = true;
+
+      setApprovedPools(approved);
+      setIsAdmin(adminFound);
+      setInstitution(approved.length > 0 ? approved[0] : adminFound ? "Admin" : null);
+      setStatus(approved.length > 0 || adminFound ? "approved" : "pending");
+    } catch (e: any) {
+      setError("Failed to verify on-chain credentials. Check your connection and retry.");
+      setStatus("error");
     }
-
-    // Also check if this IS the root authority
-    if (publicKey.toBase58() === ROOT_AUTHORITY) adminFound = true;
-
-    setApprovedPools(approved);
-    setIsAdmin(adminFound);
-    setInstitution(approved.length > 0 ? approved[0] : adminFound ? "Admin" : null);
-    setStatus(approved.length > 0 || adminFound ? "approved" : "pending");
   }, [publicKey, connection]);
 
   useEffect(() => {
@@ -88,9 +92,7 @@ export default function KycGate({ children }: { children: ReactNode }) {
 
     try {
       const pool = POOLS[3]; // Legacy pool (authority-owned)
-      const disc = Buffer.from(
-        crypto.createHash("sha256").update("global:add_participant").digest().subarray(0, 8)
-      );
+      const disc = Buffer.from(ADD_PARTICIPANT_DISC);
       const [whitelistEntry] = PublicKey.findProgramAddressSync(
         [Buffer.from("whitelist"), new PublicKey(pool.dmConfig).toBuffer(), publicKey.toBuffer()],
         DELTA_MINT
@@ -167,6 +169,19 @@ export default function KycGate({ children }: { children: ReactNode }) {
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
         <span className="loading loading-spinner loading-lg text-primary"></span>
         <p className="text-base-content/60 text-sm">Verifying institutional credentials...</p>
+      </div>
+    );
+  }
+
+  // RPC / connection error
+  if (status === "error") {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-error" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        </svg>
+        <p className="text-base-content/60 text-sm text-center max-w-sm">{error}</p>
+        <button className="btn btn-primary btn-sm" onClick={checkWhitelist}>Retry Verification</button>
       </div>
     );
   }

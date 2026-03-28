@@ -9,6 +9,7 @@ import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
 import { PhantomWalletAdapter } from "@solana/wallet-adapter-wallets";
 import "@solana/wallet-adapter-react-ui/styles.css";
 
+import GeoGate from "./components/GeoGate";
 import Layout from "./components/Layout";
 
 const network = WalletAdapterNetwork.Devnet;
@@ -18,6 +19,7 @@ export default function App() {
   const wallets = useMemo(() => [new PhantomWalletAdapter({ network })], []);
 
   return (
+    <GeoGate>
     <ConnectionProvider endpoint={endpoint}>
       <WalletProvider wallets={wallets} autoConnect>
         <WalletModalProvider>
@@ -25,5 +27,6 @@ export default function App() {
         </WalletModalProvider>
       </WalletProvider>
     </ConnectionProvider>
+    </GeoGate>
   );
 }

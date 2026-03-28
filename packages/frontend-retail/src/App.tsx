@@ -8,6 +8,7 @@ import { PhantomWalletAdapter } from "@solana/wallet-adapter-wallets";
 import { WalletAdapterNetwork, } from "@solana/wallet-adapter-base";
 import { clusterApiUrl } from "@solana/web3.js";
 import { SavingsApp } from "./pages/SavingsApp";
+import GeoGate from "./components/GeoGate";
 
 import "@solana/wallet-adapter-react-ui/styles.css";
 
@@ -21,6 +22,7 @@ export default function App() {
   );
 
   return (
+    <GeoGate>
     <ConnectionProvider endpoint={endpoint}>
       <WalletProvider wallets={wallets} autoConnect>
         <WalletModalProvider>
@@ -28,5 +30,6 @@ export default function App() {
         </WalletModalProvider>
       </WalletProvider>
     </ConnectionProvider>
+    </GeoGate>
   );
 }
