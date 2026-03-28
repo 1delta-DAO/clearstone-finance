@@ -2,3 +2,69 @@
 @plugin "daisyui" {
   themes: business --default, corporate;
 }
+
+/* ---- Wallet Adapter Override (DaisyUI 5 variables) ---- */
+.wallet-adapter-modal-wrapper {
+  background-color: oklch(var(--color-base-100) / 0.95) !important;
+}
+.wallet-adapter-modal-container {
+  background-color: oklch(var(--color-base-200)) !important;
+  border: 1px solid oklch(var(--color-base-300)) !important;
+  border-radius: 1rem !important;
+  color: oklch(var(--color-base-content)) !important;
+  box-shadow: 0 25px 50px -12px oklch(0% 0 0 / 0.5) !important;
+}
+.wallet-adapter-modal-title {
+  color: oklch(var(--color-base-content)) !important;
+  font-weight: 700 !important;
+}
+.wallet-adapter-modal-list .wallet-adapter-button {
+  background-color: oklch(var(--color-base-300)) !important;
+  color: oklch(var(--color-base-content)) !important;
+  border-radius: 0.75rem !important;
+  padding: 0.75rem 1rem !important;
+  height: auto !important;
+  justify-content: flex-start !important;
+  width: 100% !important;
+}
+.wallet-adapter-modal-list .wallet-adapter-button:hover {
+  background-color: oklch(var(--color-primary) / 0.15) !important;
+}
+.wallet-adapter-modal-list-more {
+  color: oklch(var(--color-primary)) !important;
+}
+.wallet-adapter-modal-button-close {
+  background-color: oklch(var(--color-base-300)) !important;
+  color: oklch(var(--color-base-content)) !important;
+}
+.wallet-adapter-button {
+  background-color: oklch(var(--color-primary)) !important;
+  color: oklch(var(--color-primary-content)) !important;
+  border: none !important;
+  border-radius: 0.5rem !important;
+  font-weight: 600 !important;
+  height: 36px !important;
+  padding: 0 1rem !important;
+}
+.wallet-adapter-button:hover {
+  filter: brightness(1.1);
+}
+.wallet-adapter-button-trigger {
+  background-color: oklch(var(--color-base-300)) !important;
+  color: oklch(var(--color-base-content)) !important;
+}
+.wallet-adapter-dropdown-list {
+  background-color: oklch(var(--color-base-200)) !important;
+  border: 1px solid oklch(var(--color-base-300)) !important;
+  border-radius: 0.75rem !important;
+  box-shadow: 0 10px 25px oklch(0% 0 0 / 0.3) !important;
+  overflow: hidden;
+}
+.wallet-adapter-dropdown-list-item {
+  background-color: transparent !important;
+  color: oklch(var(--color-base-content)) !important;
+  padding: 0.6rem 1rem !important;
+}
+.wallet-adapter-dropdown-list-item:hover {
+  background-color: oklch(var(--color-primary) / 0.1) !important;
+}
