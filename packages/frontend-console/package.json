@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "sync-idl": "mkdir -p public/idl && cp ../programs/target/idl/governor.json ../programs/target/idl/delta_mint.json public/idl/",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "pnpm build && npx wrangler pages deploy dist --project-name stablehacks-console"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",

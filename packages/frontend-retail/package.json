@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "sync-idl": "mkdir -p public/idl && cp ../programs/target/idl/governor.json ../programs/target/idl/delta_mint.json public/idl/",
     "preview": "vite preview --port 3001",
-    "faucet:serve": "npx tsx faucet-server.ts"
+    "faucet:serve": "npx tsx faucet-server.ts",
+    "deploy": "pnpm build && npx wrangler pages deploy dist --project-name stablehacks-retail"
   },
   "dependencies": {
     "@civic/solana-gateway-react": "^0.10.0",
