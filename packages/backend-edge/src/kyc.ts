@@ -68,7 +68,17 @@ kyc.post("/approve", async (c) => {
   if (!record) {
     record = { walletAddress, entityType: "company", name: "Auto-registered", email: "", status: "pending", submittedAt: new Date().toISOString() };
   }
-  if (record.status === "approved") return c.json({ success: true, data: record, message: "Already approved" });
+  if (record.status === "approved") {
+    // Still attempt on-chain whitelist in case it wasn't written before
+    const adminKey = c.env.ADMIN_KEYPAIR_JSON;
+    if (adminKey) {
+      try {
+        record.txSignatures = await whitelistOnChain(c.env.SOLANA_RPC_URL, adminKey, walletAddress);
+        await putRecord(c.env.WHITELIST_CACHE, record);
+      } catch {}
+    }
+    return c.json({ success: true, data: record, message: "Already approved" });
+  }
 
   await new Promise((r) => setTimeout(r, 500));
 
@@ -127,11 +137,14 @@ async function deriveWhitelistPda(dmConfig: string, wallet: string): Promise<str
 }
 
 async function rpcCall(rpcUrl: string, method: string, params: unknown[]): Promise<any> {
-  const resp = await fetch(rpcUrl, {
+  const url = rpcUrl || "https://api.devnet.solana.com";
+  const resp = await fetch(url, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
   });
-  return (await resp.json() as any).result;
+  const json = await resp.json() as any;
+  if (json.error) throw new Error(json.error.message || JSON.stringify(json.error));
+  return json.result;
 }
 
 async function whitelistOnChain(rpcUrl: string, adminKeypairJson: string, walletAddress: string): Promise<string[]> {
