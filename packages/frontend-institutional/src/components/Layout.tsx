@@ -36,11 +36,14 @@ export default function Layout({
       <header className="navbar bg-base-200 border-b border-base-300 px-6 min-h-16">
         <div className="flex-1 gap-3 items-center">
           <div className="flex items-center gap-2">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-7 w-7 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
-            <span className="text-xl font-bold tracking-tight">Delta</span>
+            <img src="/logo.svg" alt="1delta Obelisk" className="h-7 w-7" />
+            <div className="flex items-baseline gap-1">
+              <span className="text-sm font-light tracking-wide text-base-content/50">1delta</span>
+              <span className="text-lg font-bold tracking-tight text-primary">Obelisk</span>
+            </div>
           </div>
-          <div className="badge badge-primary badge-outline text-xs font-semibold">Institutional</div>
-          <div className="badge badge-ghost badge-xs font-mono">devnet</div>
+          <span className="text-xs font-semibold text-primary/70">Institutional</span>
+          <span className="text-xs font-mono text-base-content/30 ml-2">devnet</span>
         </div>
         <div className="flex-none">
           <WalletMultiButton />
@@ -76,7 +79,7 @@ export default function Layout({
 
       {/* Footer */}
       <footer className="border-t border-base-300 bg-base-200 py-4 px-6 text-center text-xs text-base-content/40">
-        Delta Institutional Lending &middot; Powered by Kamino (klend) on Solana &middot; Devnet
+        1delta Obelisk &middot; Institutional Lending &middot; Powered by Kamino (klend) on Solana &middot; Devnet
       </footer>
     </div>
   );

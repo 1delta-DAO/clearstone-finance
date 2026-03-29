@@ -111,10 +111,11 @@ export function SavingsApp() {
       {/* Navbar */}
       <div className="navbar bg-base-200/50 backdrop-blur-sm border-b border-primary/20 px-6">
         <div className="navbar-start gap-2">
-          <span className="text-2xl">&#9651;</span>
-          <span className="font-bold text-lg bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
-            Delta Savings
-          </span>
+          <img src="/logo.svg" alt="1delta Obelisk" className="h-8 w-8" />
+          <div className="flex items-baseline gap-1">
+            <span className="text-base font-light tracking-wide opacity-50">1delta</span>
+            <span className="text-lg font-bold tracking-tight" style={{ color: "#a78bfa" }}>Obelisk</span>
+          </div>
         </div>
         <div className="navbar-end">
           <WalletMultiButton />
@@ -201,7 +202,7 @@ export function SavingsApp() {
       {/* Footer */}
       <footer className="footer footer-center p-6 text-base-content/30 text-sm border-t border-base-300">
         <div>
-          <p>Delta Protocol — Regulated DeFi Savings</p>
+          <p>1delta Obelisk — Regulated DeFi Savings</p>
           <p className="text-xs mt-1">Powered by Kamino Finance on Solana Devnet</p>
         </div>
       </footer>

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none">
+  <defs>
+    <linearGradient id="obl" x1="45" y1="5" x2="45" y2="110" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#d9f99d"/>
+      <stop offset="100%" stop-color="#3f6212"/>
+    </linearGradient>
+    <linearGradient id="obr" x1="75" y1="5" x2="75" y2="110" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#bef264"/>
+      <stop offset="100%" stop-color="#365314"/>
+    </linearGradient>
+    <linearGradient id="obt" x1="60" y1="95" x2="60" y2="115" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4d7c0f"/>
+      <stop offset="100%" stop-color="#1a2e05"/>
+    </linearGradient>
+  </defs>
+  <!-- Left face -->
+  <polygon points="60,6 30,96 60,106" fill="url(#obl)"/>
+  <!-- Right face -->
+  <polygon points="60,6 60,106 90,96" fill="url(#obr)"/>
+  <!-- Bottom face (3D edge) -->
+  <polygon points="30,96 60,106 90,96 60,116" fill="url(#obt)"/>
+  <!-- Delta symbol -->
+  <polygon points="60,36 47,70 73,70" fill="none" stroke="#fefce8" stroke-width="2.5" stroke-linejoin="round" opacity="0.85"/>
+</svg>

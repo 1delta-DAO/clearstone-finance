@@ -77,6 +77,7 @@ interface PositionData {
   maxBorrow: number;
   availableLiquidity: number;
   liquidationPrice: number | null; // collateral price at which HF=1
+  borrowAPR: number | null; // current borrow APR from on-chain curve
 }
 
 export default function PositionsPage() {
@@ -127,13 +128,43 @@ export default function PositionsPage() {
         if (ui) usdcBalance = Number(ui.data.readBigUInt64LE(64)) / 1e6;
       } catch {}
 
-      // Available liquidity
-      const [usdcLiqSupply] = PublicKey.findProgramAddressSync([Buffer.from("reserve_liq_supply"), USDC_RESERVE.toBuffer()], KLEND);
-      const vaultInfo = await connection.getAccountInfo(usdcLiqSupply);
-      const availableLiquidity = vaultInfo ? Number(vaultInfo.data.readBigUInt64LE(64)) / 1e6 : 0;
+      // Read USDC reserve for available liquidity + borrow rate
+      const reserveInfo = await connection.getAccountInfo(USDC_RESERVE);
+      let availableLiquidity = 0;
+      let borrowAPR: number | null = null;
+      if (reserveInfo && reserveInfo.data.length >= 5008) {
+        const rd = reserveInfo.data;
+        const available = Number(rd.readBigUInt64LE(224));
+        const sfLo = rd.readBigUInt64LE(232);
+        const sfHi = rd.readBigUInt64LE(240);
+        const borrowed = Number((sfLo + (sfHi << 64n)) >> 60n);
+        availableLiquidity = available / 1e6;
+        const total = available + borrowed;
+        const util = total > 0 ? borrowed / total : 0;
+        // Decode borrow rate curve (11 points: {utilBps: u32, rateBps: u32})
+        const CURVE_OFF = 4920;
+        const pts: { u: number; r: number }[] = [];
+        for (let i = 0; i < 11; i++) {
+          const u = rd.readUInt32LE(CURVE_OFF + i * 8);
+          const r = rd.readUInt32LE(CURVE_OFF + i * 8 + 4);
+          pts.push({ u, r });
+          if (u >= 10000) break;
+        }
+        const utilBps = Math.round(util * 10000);
+        let rateBps = 0;
+        for (let i = 0; i < pts.length - 1; i++) {
+          if (utilBps >= pts[i].u && utilBps <= pts[i + 1].u) {
+            const t = pts[i + 1].u === pts[i].u ? 0 : (utilBps - pts[i].u) / (pts[i + 1].u - pts[i].u);
+            rateBps = pts[i].r + t * (pts[i + 1].r - pts[i].r);
+            break;
+          }
+        }
+        if (utilBps >= (pts[pts.length - 1]?.u ?? 10000)) rateBps = pts[pts.length - 1]?.r ?? 0;
+        borrowAPR = rateBps / 10000; // fraction
+      }
 
       if (!info) {
-        setPosition({ address: obPda.toBase58(), deposits: [], borrows: [], totalCollateralUsd: 0, totalBorrowUsd: 0, healthFactor: null, ltvPct: 95, liqThreshPct: 98, walletBalances, usdcBalance, maxBorrow: 0, availableLiquidity, liquidationPrice: null });
+        setPosition({ address: obPda.toBase58(), deposits: [], borrows: [], totalCollateralUsd: 0, totalBorrowUsd: 0, healthFactor: null, ltvPct: 95, liqThreshPct: 98, walletBalances, usdcBalance, maxBorrow: 0, availableLiquidity, liquidationPrice: null, borrowAPR });
         setLoading(false);
         return;
       }
@@ -179,7 +210,7 @@ export default function PositionsPage() {
         ? totalBorrowUsd / (totalCollateralTokens * (liqThreshPct / 100))
         : null;
 
-      setPosition({ address: obPda.toBase58(), deposits, borrows, totalCollateralUsd, totalBorrowUsd, healthFactor, ltvPct, liqThreshPct, walletBalances, usdcBalance, maxBorrow, availableLiquidity, liquidationPrice });
+      setPosition({ address: obPda.toBase58(), deposits, borrows, totalCollateralUsd, totalBorrowUsd, healthFactor, ltvPct, liqThreshPct, walletBalances, usdcBalance, maxBorrow, availableLiquidity, liquidationPrice, borrowAPR });
     } catch (e) { console.warn("Load failed:", e); }
     setLoading(false);
   }, [publicKey, connection]);
@@ -667,7 +698,7 @@ export default function PositionsPage() {
             {showBorrow && p && (
               <div className="bg-base-300 rounded-lg p-4 space-y-3">
                 <div className="flex items-center justify-between">
-                  <div className="text-xs opacity-50">Borrow USDC — pool: {p.availableLiquidity.toFixed(2)} | capacity: {p.maxBorrow.toFixed(2)}</div>
+                  <div className="text-xs opacity-50">Borrow USDC — pool: {p.availableLiquidity.toFixed(2)} | capacity: {p.maxBorrow.toFixed(2)}{p.borrowAPR !== null ? ` | ${(p.borrowAPR * 100).toFixed(2)}% APR` : ""}</div>
                   <button className="btn btn-ghost btn-xs" onClick={() => setShowBorrow(false)}>Cancel</button>
                 </div>
                 <div className="flex gap-2">
@@ -752,7 +783,7 @@ export default function PositionsPage() {
                 <div><span className="opacity-40">Obligation ID</span><div className="font-mono">{OB_ID}</div></div>
                 <div><span className="opacity-40">Obligation</span><div className="font-mono text-xs">{p.address.slice(0, 16)}...</div></div>
                 <div><span className="opacity-40">Market</span><div className="font-mono text-xs">{MARKET.toBase58().slice(0, 16)}...</div></div>
-                <div><span className="opacity-40">Borrow Rate</span><div className="font-mono">0.5%–20% APY</div></div>
+                <div><span className="opacity-40">Borrow Rate</span><div className="font-mono">{p.borrowAPR !== null ? `${(p.borrowAPR * 100).toFixed(2)}% APR` : "—"}</div></div>
               </div>
             )}
           </div>

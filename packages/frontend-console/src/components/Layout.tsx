@@ -57,12 +57,13 @@ export default function Layout() {
       <div className="navbar bg-base-200 border-b border-base-300 px-4 lg:px-8 gap-2">
         <div className="navbar-start">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-primary-content font-bold text-sm">
-              D
-            </div>
+            <img src="/logo.svg" alt="1delta Obelisk" className="w-8 h-8" />
             <div>
-              <h1 className="text-base font-bold tracking-tight leading-tight">Delta Lending</h1>
-              <p className="text-[10px] opacity-40 leading-tight">Institutional KYC-Gated Lending</p>
+              <div className="flex items-baseline gap-1">
+                <span className="text-sm font-light tracking-wide text-base-content/50">1delta</span>
+                <span className="text-base font-bold tracking-tight text-primary">Obelisk</span>
+              </div>
+              <p className="text-[10px] opacity-40 leading-tight">Admin Console</p>
             </div>
           </div>
         </div>
@@ -150,7 +151,7 @@ export default function Layout() {
 
       {/* Footer */}
       <footer className="footer footer-center p-6 text-base-content/20 text-xs border-t border-base-300 mt-8">
-        <p>Delta Protocol — Solana Devnet</p>
+        <p>1delta Obelisk — Solana Devnet</p>
       </footer>
     </div>
   );
