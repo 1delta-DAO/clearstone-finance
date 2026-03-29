@@ -12,8 +12,6 @@ import GeoGate from "./components/GeoGate";
 import Layout from "./components/Layout";
 import KycGate from "./components/KycGate";
 import Dashboard from "./pages/Dashboard";
-import CollateralPage from "./pages/CollateralPage";
-import BorrowPage from "./pages/BorrowPage";
 import PositionsPage from "./pages/PositionsPage";
 import PreparePage from "./pages/PreparePage";
 
@@ -21,7 +19,7 @@ const RPC = "https://api.devnet.solana.com";
 
 export default function App() {
   const wallets = useMemo(() => [new PhantomWalletAdapter()], []);
-  const [tab, setTab] = useState<"dashboard" | "prepare" | "collateral" | "borrow" | "positions">("dashboard");
+  const [tab, setTab] = useState<"dashboard" | "prepare" | "positions">("dashboard");
 
   return (
     <GeoGate>
@@ -32,8 +30,6 @@ export default function App() {
             <KycGate>
               {tab === "dashboard" && <Dashboard />}
               {tab === "prepare" && <PreparePage />}
-              {tab === "collateral" && <CollateralPage />}
-              {tab === "borrow" && <BorrowPage />}
               {tab === "positions" && <PositionsPage />}
             </KycGate>
           </Layout>
