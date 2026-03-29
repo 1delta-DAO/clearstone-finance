@@ -16,6 +16,13 @@ const DISC = {
   refresh_reserve: Buffer.from([2, 218, 138, 235, 79, 201, 25, 102]),
   refresh_obligation: Buffer.from([33, 132, 147, 228, 151, 192, 72, 89]),
   borrow_obligation_liquidity: Buffer.from([121, 127, 18, 204, 73, 245, 225, 65]),
+  repay_obligation_liquidity: Buffer.from([145, 178, 13, 225, 76, 240, 147, 72]),
+};
+
+const RESERVE_ORACLES: Record<string, PublicKey> = {
+  "3FkBgVfnYBnUre6GMQZv8w4dDM1x7Fp5RiGk96kZ5mVs": new PublicKey("6dbNQrjLVQxk1bJhbB6AiMFWzaf8G2d3LPjH69Je498A"),
+  "AYhwFLgzxWwqznhxv6Bg1NVnNeoDNu9SBGLzM1W3hSfb": new PublicKey("EN2FsFZFdpiFAWpKDZqeJ2PY8EyE7xzz9Ew8ZQVhtHCJ"),
+  "HhTUuM5XwpnQchiUiLVNxUjPkHtfbcX4aF4bWKCSSAuT": new PublicKey("4Xv1RpZQHZNHatTba3xUW4foLYUM6x36NxehihVcUnPQ"),
 };
 
 interface PositionData {
@@ -35,6 +42,7 @@ export default function BorrowPage() {
   const { publicKey, signTransaction } = useWallet();
   const { connection } = useConnection();
   const [amount, setAmount] = useState("");
+  const [repayAmount, setRepayAmount] = useState("");
   const [status, setStatus] = useState<{ msg: string; type: "info" | "success" | "error" } | null>(null);
   const [loading, setLoading] = useState(false);
   const [position, setPosition] = useState<PositionData | null>(null);
@@ -101,18 +109,18 @@ export default function BorrowPage() {
         }
 
         // Search for borrow reserve
-        // ObligationLiquidity layout: reserve(32) + cumulative_borrow_rate_bsf(16) + padding(8) + borrowed_amount_sf(16) + ...
-        // borrowed_amount_sf is a u128 scaled by 2^60
+        // ObligationLiquidity layout: reserve(32) + cumulative_borrow_rate_bsf(32) + padding(24) + borrowed_amount_sf(16) + ...
+        // borrowed_amount_sf at offset +88 from reserve pubkey, u128 scaled by 2^60
         const usdcBuf = USDC_RESERVE.toBuffer();
         for (let i = 900; i < Math.min(obInfo.data.length - 32, 1800); i++) {
           if (obInfo.data.subarray(i, i + 32).equals(usdcBuf)) {
             try {
-              // borrowed_amount_sf at offset +56 (32 + 16 + 8 = 56), u128 = lo(u64) + hi(u64)
-              const borrowedSfLo = obInfo.data.readBigUInt64LE(i + 56);
-              const borrowedSfHi = obInfo.data.readBigUInt64LE(i + 64);
+              const borrowedSfLo = obInfo.data.readBigUInt64LE(i + 88);
+              const borrowedSfHi = obInfo.data.readBigUInt64LE(i + 96);
               const borrowedSf = borrowedSfLo + (borrowedSfHi << 64n);
               const FRACTION_ONE = 1n << 60n;
-              borrowedUsdc = Number(borrowedSf * 1000000n / FRACTION_ONE) / 1e6;
+              // sf value is in lamports * 2^60. Divide by 2^60 to get lamports, then by 1e6 for decimals.
+              borrowedUsdc = Number(borrowedSf / FRACTION_ONE) / 1e6;
             } catch {}
             break;
           }
@@ -241,6 +249,89 @@ export default function BorrowPage() {
     }
   }
 
+  async function handleRepay() {
+    if (!publicKey || !repayAmount) return;
+    setLoading(true);
+    setStatus({ msg: "Building repay transaction...", type: "info" });
+
+    try {
+      const amountLamports = repayAmount === "max" && position
+        ? BigInt("18446744073709551615") // u64::MAX = repay all
+        : BigInt(Math.floor(parseFloat(repayAmount) * 1e6));
+
+      const [obPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from([0]), Buffer.from([OB_ID]), publicKey.toBuffer(), MARKET.toBuffer(),
+         PublicKey.default.toBuffer(), PublicKey.default.toBuffer()], KLEND
+      );
+      const obInfo = await connection.getAccountInfo(obPda);
+      if (!obInfo) {
+        setStatus({ msg: "No obligation found.", type: "error" });
+        setLoading(false);
+        return;
+      }
+
+      const [usdcLiqSupply] = PublicKey.findProgramAddressSync([Buffer.from("reserve_liq_supply"), USDC_RESERVE.toBuffer()], KLEND);
+      const userUsdcAta = getAssociatedTokenAddressSync(USDC_MINT, publicKey);
+
+      const tx = new Transaction();
+
+      // Refresh all reserves in obligation (borrow reserve LAST)
+      const obligationReserves = findObligationReserves(Buffer.from(obInfo.data));
+      const usdcAddr = USDC_RESERVE.toBase58();
+      const others = obligationReserves.filter(r => r.toBase58() !== usdcAddr);
+      const refreshOrder = [...others, USDC_RESERVE];
+      for (const reserve of refreshOrder) {
+        const oracle = RESERVE_ORACLES[reserve.toBase58()] || USDC_ORACLE;
+        tx.add({ programId: KLEND, data: DISC.refresh_reserve, keys: [
+          { pubkey: reserve, isSigner: false, isWritable: true },
+          { pubkey: MARKET, isSigner: false, isWritable: false },
+          { pubkey: oracle, isSigner: false, isWritable: false },
+          { pubkey: KLEND, isSigner: false, isWritable: false },
+          { pubkey: KLEND, isSigner: false, isWritable: false },
+          { pubkey: KLEND, isSigner: false, isWritable: false },
+        ]});
+      }
+
+      tx.add({ programId: KLEND, data: DISC.refresh_obligation, keys: [
+        { pubkey: MARKET, isSigner: false, isWritable: false },
+        { pubkey: obPda, isSigner: false, isWritable: true },
+        ...obligationReserves.map(r => ({ pubkey: r, isSigner: false, isWritable: false })),
+      ]});
+
+      // Repay
+      const amtBuf = Buffer.alloc(8);
+      amtBuf.writeBigUInt64LE(amountLamports, 0);
+      tx.add({ programId: KLEND, data: Buffer.concat([DISC.repay_obligation_liquidity, amtBuf]), keys: [
+        { pubkey: publicKey, isSigner: true, isWritable: false },
+        { pubkey: obPda, isSigner: false, isWritable: true },
+        { pubkey: MARKET, isSigner: false, isWritable: false },
+        { pubkey: USDC_RESERVE, isSigner: false, isWritable: true },
+        { pubkey: USDC_MINT, isSigner: false, isWritable: false },
+        { pubkey: usdcLiqSupply, isSigner: false, isWritable: true },
+        { pubkey: userUsdcAta, isSigner: false, isWritable: true },
+        { pubkey: KLEND, isSigner: false, isWritable: false },
+        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+        { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
+      ]});
+
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+      tx.recentBlockhash = blockhash;
+      tx.lastValidBlockHeight = lastValidBlockHeight;
+      tx.feePayer = publicKey;
+
+      setStatus({ msg: "Sign repay transaction...", type: "info" });
+      const sig = await signAndSend(tx);
+      const displayAmt = repayAmount === "max" ? "all" : repayAmount;
+      setStatus({ msg: `Repaid ${displayAmt} USDC (tx: ${sig.slice(0, 16)}...)`, type: "success" });
+      setRepayAmount("");
+      await loadPosition();
+    } catch (e: any) {
+      setStatus({ msg: `Repay failed: ${e.message?.slice(0, 120)}`, type: "error" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
   const p = position;
 
   return (
@@ -299,7 +390,14 @@ export default function BorrowPage() {
         <div className="alert alert-info text-sm">No obligation found. Deposit collateral first.</div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      {/* Status */}
+      {status && (
+        <div className={`alert ${status.type === "success" ? "alert-success" : status.type === "error" ? "alert-error" : "alert-info"} text-sm`}>
+          {status.msg}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* Borrow Card */}
         <div className="card bg-base-200 border border-base-300">
           <div className="card-body p-6 gap-4">
@@ -321,7 +419,6 @@ export default function BorrowPage() {
               </button>
             </div>
 
-            {/* Preview */}
             {amount && p && parseFloat(amount) > 0 && (
               <div className="bg-base-300 rounded-lg p-3 text-xs space-y-1">
                 <div className="flex justify-between">
@@ -350,12 +447,61 @@ export default function BorrowPage() {
             >
               {loading ? <span className="loading loading-spinner loading-sm" /> : "Borrow USDC"}
             </button>
+          </div>
+        </div>
 
-            {status && (
-              <div className={`alert ${status.type === "success" ? "alert-success" : status.type === "error" ? "alert-error" : "alert-info"} text-sm`}>
-                {status.msg}
+        {/* Repay Card */}
+        <div className="card bg-base-200 border border-base-300">
+          <div className="card-body p-6 gap-4">
+            <h3 className="card-title">Repay USDC</h3>
+
+            <div className="flex gap-2">
+              <input
+                className="input input-bordered bg-base-300 text-base-content flex-1 font-mono"
+                placeholder="0.00"
+                value={repayAmount === "max" ? `${p?.borrowedUsdc.toFixed(2) || 0} (max)` : repayAmount}
+                onChange={e => setRepayAmount(e.target.value.replace(/[^0-9.]/g, ""))}
+                inputMode="decimal"
+              />
+              <button
+                className="btn btn-ghost btn-sm self-center"
+                onClick={() => setRepayAmount("max")}
+              >
+                MAX
+              </button>
+            </div>
+
+            {repayAmount && repayAmount !== "max" && p && parseFloat(repayAmount) > 0 && (
+              <div className="bg-base-300 rounded-lg p-3 text-xs space-y-1">
+                <div className="flex justify-between">
+                  <span className="opacity-50">Remaining debt</span>
+                  <span className="font-mono">${Math.max(0, p.borrowedUsdc - parseFloat(repayAmount)).toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="opacity-50">New health factor</span>
+                  <span className="font-mono text-success">
+                    {p.borrowedUsdc - parseFloat(repayAmount) <= 0 ? "∞" :
+                      (p.collateralValueUsd * (p.liqThreshPct / 100) / (p.borrowedUsdc - parseFloat(repayAmount))).toFixed(2)}
+                  </span>
+                </div>
               </div>
             )}
+
+            {repayAmount === "max" && p && (
+              <div className="bg-base-300 rounded-lg p-3 text-xs">
+                <span className="opacity-50">Repaying full debt: </span>
+                <span className="font-mono font-bold">${p.borrowedUsdc.toFixed(2)} USDC</span>
+              </div>
+            )}
+
+            <button
+              className="btn btn-success w-full"
+              onClick={handleRepay}
+              disabled={loading || !repayAmount || !p || p.borrowedUsdc <= 0 || (repayAmount !== "max" && parseFloat(repayAmount) <= 0)}
+            >
+              {loading ? <span className="loading loading-spinner loading-sm" /> :
+                repayAmount === "max" ? "Repay All" : "Repay USDC"}
+            </button>
           </div>
         </div>
 
