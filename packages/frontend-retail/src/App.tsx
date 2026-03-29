@@ -25,6 +25,7 @@ function CivicWrapper({ children }: { children: React.ReactNode }) {
     <GatewayProvider
       gatekeeperNetwork={GATEKEEPER_NETWORK}
       cluster="devnet"
+      clusterUrl={endpoint}
     >
       {children}
     </GatewayProvider>
