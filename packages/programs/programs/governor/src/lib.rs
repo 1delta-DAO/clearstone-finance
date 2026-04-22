@@ -133,7 +133,12 @@ pub mod governor {
                 )?;
             }
             ParticipantRole::Liquidator => {
-                delta_cpi::add_to_whitelist_with_co_authority(
+                delta_cpi::add_liquidator_with_co_authority(
+                    CpiContext::new_with_signer(cpi_program, cpi_accounts, &[seeds])
+                )?;
+            }
+            ParticipantRole::Escrow => {
+                delta_cpi::add_escrow_with_co_authority(
                     CpiContext::new_with_signer(cpi_program, cpi_accounts, &[seeds])
                 )?;
             }
@@ -165,6 +170,9 @@ pub mod governor {
             }
             ParticipantRole::Liquidator => {
                 delta_cpi::add_liquidator(CpiContext::new(cpi_program, cpi_accounts))?;
+            }
+            ParticipantRole::Escrow => {
+                delta_cpi::add_escrow(CpiContext::new(cpi_program, cpi_accounts))?;
             }
         }
 
@@ -1030,6 +1038,11 @@ pub struct PoolParams {
 pub enum ParticipantRole {
     Holder,
     Liquidator,
+    /// Program-owned custody PDA from an integrating protocol (e.g.
+    /// clearstone_core's `escrow_sy` / `token_fee_treasury_sy` / vault
+    /// `yield_position` SY ATA). Whitelisted so the PDA can hold the mint;
+    /// not eligible for `mint_to`.
+    Escrow,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]

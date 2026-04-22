@@ -150,6 +150,84 @@ pub mod delta_mint {
         Ok(())
     }
 
+    /// Adds a wallet as an approved liquidator via a co-authority (PDA signer).
+    /// Mirror of `add_liquidator` for activated pools where mint authority has
+    /// been transferred to a pool PDA. Previously unavailable, which forced
+    /// `add_participant_via_pool(Liquidator)` to fall back to the Holder path
+    /// and store the wrong role.
+    pub fn add_liquidator_with_co_authority(ctx: Context<AddToWhitelistCoAuth>) -> Result<()> {
+        let entry = &mut ctx.accounts.whitelist_entry;
+        entry.wallet = ctx.accounts.wallet.key();
+        entry.mint_config = ctx.accounts.mint_config.key();
+        entry.approved = true;
+        entry.role = WhitelistRole::Liquidator;
+        entry.approved_at = Clock::get()?.unix_timestamp;
+        entry.bump = ctx.bumps.whitelist_entry;
+
+        let config = &mut ctx.accounts.mint_config;
+        config.total_whitelisted = config.total_whitelisted.checked_add(1).unwrap();
+
+        emit!(WhitelistEvent {
+            wallet: entry.wallet,
+            mint: config.mint,
+            approved: true,
+            timestamp: entry.approved_at,
+        });
+
+        Ok(())
+    }
+
+    /// Adds a program-owned custody PDA to the whitelist as an Escrow role.
+    /// Used by integrating protocols (e.g. clearstone_core) so their SY escrows
+    /// and fee treasuries can hold the KYC-gated mint. Eligible to RECEIVE
+    /// transfers; NOT eligible for `mint_to`.
+    pub fn add_escrow(ctx: Context<AddToWhitelist>) -> Result<()> {
+        let entry = &mut ctx.accounts.whitelist_entry;
+        entry.wallet = ctx.accounts.wallet.key();
+        entry.mint_config = ctx.accounts.mint_config.key();
+        entry.approved = true;
+        entry.role = WhitelistRole::Escrow;
+        entry.approved_at = Clock::get()?.unix_timestamp;
+        entry.bump = ctx.bumps.whitelist_entry;
+
+        let config = &mut ctx.accounts.mint_config;
+        config.total_whitelisted = config.total_whitelisted.checked_add(1).unwrap();
+
+        emit!(WhitelistEvent {
+            wallet: entry.wallet,
+            mint: config.mint,
+            approved: true,
+            timestamp: entry.approved_at,
+        });
+
+        Ok(())
+    }
+
+    /// Adds an escrow PDA via a co-authority (PDA signer). Used on activated
+    /// pools where mint authority has moved to a pool PDA, e.g. a governor
+    /// pool CPI'ing on behalf of an integrating protocol.
+    pub fn add_escrow_with_co_authority(ctx: Context<AddToWhitelistCoAuth>) -> Result<()> {
+        let entry = &mut ctx.accounts.whitelist_entry;
+        entry.wallet = ctx.accounts.wallet.key();
+        entry.mint_config = ctx.accounts.mint_config.key();
+        entry.approved = true;
+        entry.role = WhitelistRole::Escrow;
+        entry.approved_at = Clock::get()?.unix_timestamp;
+        entry.bump = ctx.bumps.whitelist_entry;
+
+        let config = &mut ctx.accounts.mint_config;
+        config.total_whitelisted = config.total_whitelisted.checked_add(1).unwrap();
+
+        emit!(WhitelistEvent {
+            wallet: entry.wallet,
+            mint: config.mint,
+            approved: true,
+            timestamp: entry.approved_at,
+        });
+
+        Ok(())
+    }
+
     /// Transfer mint config authority to a new address (e.g., governor PDA).
     /// Only current authority can call this.
     pub fn transfer_authority(ctx: Context<TransferAuthority>, new_authority: Pubkey) -> Result<()> {
@@ -492,6 +570,11 @@ pub enum WhitelistRole {
     /// Approved liquidator bot — can receive collateral during Kamino liquidations.
     /// Cannot mint new tokens, only receive via protocol liquidation flows.
     Liquidator,
+    /// Program-owned custody PDA from an integrating protocol (e.g.
+    /// clearstone_core escrow_sy / token_fee_treasury_sy). Whitelisted so it
+    /// can hold the mint, but ineligible for `mint_to` — authority-mint stays
+    /// pointed at real KYC'd users only.
+    Escrow,
 }
 
 // ---------------------------------------------------------------------------

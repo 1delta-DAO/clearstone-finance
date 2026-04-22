@@ -1,0 +1,188 @@
+From fc219bee94b72ffaa63f4d249566325b78e473cb Mon Sep 17 00:00:00 2001
+From: clearstone-bot <bot@1delta.io>
+Date: Wed, 22 Apr 2026 23:38:00 +0200
+Subject: [PATCH] Add ParticipantRole::Escrow + delta-mint escrow whitelist
+ paths
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Appends a third role variant to delta-mint's WhitelistRole and governor's
+ParticipantRole for program-owned custody PDAs (e.g. clearstone_core
+escrow_sy / token_fee_treasury_sy).
+
+Semantics:
+- Escrow entries can hold the mint (receive via transfer_checked).
+- Escrow entries CANNOT be mint_to destinations — they fall through the
+  existing Holder-only check in mint_to.
+
+delta-mint changes:
+- Append WhitelistRole::Escrow variant (discriminant 2).
+- Add add_escrow_to_whitelist (main authority path).
+- Add add_escrow_to_whitelist_with_co_authority (activated-pool path).
+- Rename LiquidatorCannotMint -> NonHolderCannotMint (error code 6002
+  stays stable; string changes to cover Escrow + Liquidator rejection).
+
+governor changes:
+- Append ParticipantRole::Escrow variant.
+- add_participant matches Escrow -> delta.add_escrow_to_whitelist.
+- add_participant_via_pool matches Escrow -> delta.add_escrow_to_whitelist_with_co_authority.
+
+Blocker-PR for clearstone-fixed-yield's M-KYC-0 / M-KYC-3 milestones.
+See clearstone-fixed-yield/GOVERNOR_ESCROW_ROLE.md for context.
+---
+ .../programs/programs/delta-mint/src/lib.rs   | 69 ++++++++++++++++++-
+ .../programs/programs/governor/src/lib.rs     | 17 ++++-
+ 2 files changed, 81 insertions(+), 5 deletions(-)
+
+diff --git a/packages/programs/programs/delta-mint/src/lib.rs b/packages/programs/programs/delta-mint/src/lib.rs
+index d12a298..006e72f 100644
+--- a/packages/programs/programs/delta-mint/src/lib.rs
++++ b/packages/programs/programs/delta-mint/src/lib.rs
+@@ -150,6 +150,62 @@ pub mod delta_mint {
+         Ok(())
+     }
+ 
++    /// Whitelist a program-owned custody account (e.g. clearstone_core `escrow_sy`
++    /// or `token_fee_treasury_sy` PDA). Escrow-role entries are eligible
++    /// destinations for `transfer_checked` but are NOT eligible for `mint_to` —
++    /// minting stays pointed at real KYC'd users only.
++    ///
++    /// Authority path: main authority. Call `add_escrow_to_whitelist_with_co_authority`
++    /// for activated pools where authority has transferred to a co-signer PDA.
++    pub fn add_escrow_to_whitelist(ctx: Context<AddToWhitelist>) -> Result<()> {
++        let entry = &mut ctx.accounts.whitelist_entry;
++        entry.wallet = ctx.accounts.wallet.key();
++        entry.mint_config = ctx.accounts.mint_config.key();
++        entry.approved = true;
++        entry.role = WhitelistRole::Escrow;
++        entry.approved_at = Clock::get()?.unix_timestamp;
++        entry.bump = ctx.bumps.whitelist_entry;
++
++        let config = &mut ctx.accounts.mint_config;
++        config.total_whitelisted = config.total_whitelisted.checked_add(1).unwrap();
++
++        emit!(WhitelistEvent {
++            wallet: entry.wallet,
++            mint: config.mint,
++            approved: true,
++            timestamp: entry.approved_at,
++        });
++
++        Ok(())
++    }
++
++    /// Co-authority variant of `add_escrow_to_whitelist`. For pools where
++    /// `activate_wrapping` has already transferred the main authority to a PDA;
++    /// the PDA signs as `co_authority` and a separate payer covers rent.
++    pub fn add_escrow_to_whitelist_with_co_authority(
++        ctx: Context<AddToWhitelistCoAuth>,
++    ) -> Result<()> {
++        let entry = &mut ctx.accounts.whitelist_entry;
++        entry.wallet = ctx.accounts.wallet.key();
++        entry.mint_config = ctx.accounts.mint_config.key();
++        entry.approved = true;
++        entry.role = WhitelistRole::Escrow;
++        entry.approved_at = Clock::get()?.unix_timestamp;
++        entry.bump = ctx.bumps.whitelist_entry;
++
++        let config = &mut ctx.accounts.mint_config;
++        config.total_whitelisted = config.total_whitelisted.checked_add(1).unwrap();
++
++        emit!(WhitelistEvent {
++            wallet: entry.wallet,
++            mint: config.mint,
++            approved: true,
++            timestamp: entry.approved_at,
++        });
++
++        Ok(())
++    }
++
+     /// Transfer mint config authority to a new address (e.g., governor PDA).
+     /// Only current authority can call this.
+     pub fn transfer_authority(ctx: Context<TransferAuthority>, new_authority: Pubkey) -> Result<()> {
+@@ -246,7 +302,7 @@ pub mod delta_mint {
+         );
+         require!(
+             ctx.accounts.whitelist_entry.role == WhitelistRole::Holder,
+-            DeltaError::LiquidatorCannotMint
++            DeltaError::NonHolderCannotMint
+         );
+         require!(amount > 0, DeltaError::InvalidAmount);
+ 
+@@ -492,6 +548,10 @@ pub enum WhitelistRole {
+     /// Approved liquidator bot — can receive collateral during Kamino liquidations.
+     /// Cannot mint new tokens, only receive via protocol liquidation flows.
+     Liquidator,
++    /// Program-owned custody account (e.g. clearstone_core escrow_sy). Can hold
++    /// the mint; cannot be a `mint_to` destination. Appended in v2 — variant
++    /// discriminant is 2, do NOT reorder.
++    Escrow,
+ }
+ 
+ // ---------------------------------------------------------------------------
+@@ -524,8 +584,11 @@ pub enum DeltaError {
+     NotWhitelisted,
+     #[msg("Mint amount must be greater than zero")]
+     InvalidAmount,
+-    #[msg("Liquidator role cannot mint new tokens")]
+-    LiquidatorCannotMint,
++    /// Variant position preserved so the numeric error code (6002) is
++    /// stable for raw-code matchers across the Holder/Escrow rename.
++    /// Clients matching by string should update to "NonHolderCannotMint".
++    #[msg("Only Holder-role entries can be mint destinations")]
++    NonHolderCannotMint,
+     #[msg("Failed to initialize Token-2022 mint with extensions")]
+     MintInitFailed,
+ }
+diff --git a/packages/programs/programs/governor/src/lib.rs b/packages/programs/programs/governor/src/lib.rs
+index e792dc1..bf36175 100644
+--- a/packages/programs/programs/governor/src/lib.rs
++++ b/packages/programs/programs/governor/src/lib.rs
+@@ -137,13 +137,18 @@ pub mod governor {
+                     CpiContext::new_with_signer(cpi_program, cpi_accounts, &[seeds])
+                 )?;
+             }
++            ParticipantRole::Escrow => {
++                delta_cpi::add_escrow_to_whitelist_with_co_authority(
++                    CpiContext::new_with_signer(cpi_program, cpi_accounts, &[seeds])
++                )?;
++            }
+         }
+ 
+         Ok(())
+     }
+ 
+-    /// Add a participant (KYC'd holder or liquidator bot).
+-    /// Can be called by root authority OR any admin.
++    /// Add a participant (KYC'd holder, liquidator bot, or program-owned
++    /// escrow PDA). Can be called by root authority OR any admin.
+     /// NOTE: Only works on pools where wrapping is NOT activated (authority not transferred).
+     /// For activated pools, use add_participant_via_pool.
+     pub fn add_participant(
+@@ -166,6 +171,9 @@ pub mod governor {
+             ParticipantRole::Liquidator => {
+                 delta_cpi::add_liquidator(CpiContext::new(cpi_program, cpi_accounts))?;
+             }
++            ParticipantRole::Escrow => {
++                delta_cpi::add_escrow_to_whitelist(CpiContext::new(cpi_program, cpi_accounts))?;
++            }
+         }
+ 
+         Ok(())
+@@ -1030,6 +1038,11 @@ pub struct PoolParams {
+ pub enum ParticipantRole {
+     Holder,
+     Liquidator,
++    /// Program-owned custody PDA (e.g. clearstone_core escrow_sy /
++    /// token_fee_treasury_sy). Whitelisted via delta-mint's
++    /// `add_escrow_to_whitelist[_with_co_authority]` — eligible to hold
++    /// the mint, rejected from `mint_to`. Appended in v2; do NOT reorder.
++    Escrow,
+ }
+ 
+ #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
+-- 
+2.39.5
+

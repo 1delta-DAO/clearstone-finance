@@ -8,6 +8,154 @@
   },
   "instructions": [
     {
+      "name": "add_escrow",
+      "docs": [
+        "Adds a program-owned custody PDA to the whitelist as an Escrow role.",
+        "Used by integrating protocols (e.g. clearstone_core) so their SY escrows",
+        "and fee treasuries can hold the KYC-gated mint. Eligible to RECEIVE",
+        "transfers; NOT eligible for `mint_to`."
+      ],
+      "discriminator": [
+        167,
+        241,
+        227,
+        228,
+        118,
+        255,
+        67,
+        73
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "mint_config"
+          ]
+        },
+        {
+          "name": "mint_config",
+          "writable": true
+        },
+        {
+          "name": "wallet"
+        },
+        {
+          "name": "whitelist_entry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  104,
+                  105,
+                  116,
+                  101,
+                  108,
+                  105,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint_config"
+              },
+              {
+                "kind": "account",
+                "path": "wallet"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "add_escrow_with_co_authority",
+      "docs": [
+        "Adds an escrow PDA via a co-authority (PDA signer). Used on activated",
+        "pools where mint authority has moved to a pool PDA, e.g. a governor",
+        "pool CPI'ing on behalf of an integrating protocol."
+      ],
+      "discriminator": [
+        253,
+        89,
+        193,
+        226,
+        111,
+        108,
+        237,
+        69
+      ],
+      "accounts": [
+        {
+          "name": "co_authority",
+          "docs": [
+            "The co-authority (e.g., governor pool PDA). Must match mint_config.co_authority."
+          ],
+          "signer": true
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "The wallet paying rent for the new whitelist entry."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "mint_config",
+          "writable": true
+        },
+        {
+          "name": "wallet"
+        },
+        {
+          "name": "whitelist_entry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  104,
+                  105,
+                  116,
+                  101,
+                  108,
+                  105,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint_config"
+              },
+              {
+                "kind": "account",
+                "path": "wallet"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "add_liquidator",
       "docs": [
         "Adds a wallet as an approved liquidator.",
@@ -32,6 +180,85 @@
           "relations": [
             "mint_config"
           ]
+        },
+        {
+          "name": "mint_config",
+          "writable": true
+        },
+        {
+          "name": "wallet"
+        },
+        {
+          "name": "whitelist_entry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  104,
+                  105,
+                  116,
+                  101,
+                  108,
+                  105,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint_config"
+              },
+              {
+                "kind": "account",
+                "path": "wallet"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "add_liquidator_with_co_authority",
+      "docs": [
+        "Adds a wallet as an approved liquidator via a co-authority (PDA signer).",
+        "Mirror of `add_liquidator` for activated pools where mint authority has",
+        "been transferred to a pool PDA. Previously unavailable, which forced",
+        "`add_participant_via_pool(Liquidator)` to fall back to the Holder path",
+        "and store the wrong role."
+      ],
+      "discriminator": [
+        36,
+        70,
+        179,
+        122,
+        96,
+        5,
+        220,
+        174
+      ],
+      "accounts": [
+        {
+          "name": "co_authority",
+          "docs": [
+            "The co-authority (e.g., governor pool PDA). Must match mint_config.co_authority."
+          ],
+          "signer": true
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "The wallet paying rent for the new whitelist entry."
+          ],
+          "writable": true,
+          "signer": true
         },
         {
           "name": "mint_config",
@@ -824,6 +1051,9 @@
           },
           {
             "name": "Liquidator"
+          },
+          {
+            "name": "Escrow"
           }
         ]
       }

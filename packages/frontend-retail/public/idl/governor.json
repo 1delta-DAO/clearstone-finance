@@ -8,6 +8,46 @@
   },
   "instructions": [
     {
+      "name": "activate_wrapping",
+      "docs": [
+        "Transfer delta-mint authority from deployer → pool PDA.",
+        "This enables the wrap/unwrap flow. Call AFTER whitelisting is done.",
+        "Only the root authority (current delta-mint authority) can call this."
+      ],
+      "discriminator": [
+        12,
+        50,
+        128,
+        61,
+        170,
+        11,
+        167,
+        34
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "pool_config"
+          ]
+        },
+        {
+          "name": "pool_config"
+        },
+        {
+          "name": "dm_mint_config",
+          "writable": true
+        },
+        {
+          "name": "delta_mint_program",
+          "address": "13Su8nR5NBzQ7UwFFUiNAH1zH5DQtLyjezhbwRREQkEn"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "add_admin",
       "docs": [
         "Add an admin to the pool. Only the root authority can add admins."
@@ -74,7 +114,9 @@
       "name": "add_participant",
       "docs": [
         "Add a participant (KYC'd holder or liquidator bot).",
-        "Can be called by root authority OR any admin."
+        "Can be called by root authority OR any admin.",
+        "NOTE: Only works on pools where wrapping is NOT activated (authority not transferred).",
+        "For activated pools, use add_participant_via_pool."
       ],
       "discriminator": [
         153,
@@ -132,6 +174,151 @@
           }
         }
       ]
+    },
+    {
+      "name": "add_participant_via_pool",
+      "docs": [
+        "Add a participant via pool PDA (for pools where wrapping is activated).",
+        "The pool PDA signs as the delta-mint authority (since authority was transferred).",
+        "Can be called by root authority OR any admin."
+      ],
+      "discriminator": [
+        200,
+        11,
+        127,
+        111,
+        117,
+        242,
+        194,
+        36
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "pool_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_config.underlying_mint",
+                "account": "PoolConfig"
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin_entry",
+          "docs": [
+            "Optional admin PDA."
+          ],
+          "optional": true
+        },
+        {
+          "name": "dm_mint_config",
+          "writable": true
+        },
+        {
+          "name": "wallet"
+        },
+        {
+          "name": "whitelist_entry",
+          "writable": true
+        },
+        {
+          "name": "delta_mint_program",
+          "address": "13Su8nR5NBzQ7UwFFUiNAH1zH5DQtLyjezhbwRREQkEn"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "role",
+          "type": {
+            "defined": {
+              "name": "ParticipantRole"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "fix_co_authority",
+      "docs": [
+        "Fix co_authority on an activated pool's MintConfig.",
+        "Sets co_authority = pool PDA so whitelist_via_pool works."
+      ],
+      "discriminator": [
+        207,
+        204,
+        16,
+        243,
+        198,
+        62,
+        99,
+        178
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "pool_config"
+          ]
+        },
+        {
+          "name": "pool_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_config.underlying_mint",
+                "account": "PoolConfig"
+              }
+            ]
+          }
+        },
+        {
+          "name": "dm_mint_config",
+          "writable": true
+        },
+        {
+          "name": "delta_mint_program",
+          "address": "13Su8nR5NBzQ7UwFFUiNAH1zH5DQtLyjezhbwRREQkEn"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
     },
     {
       "name": "initialize_pool",
@@ -452,6 +639,72 @@
       "args": []
     },
     {
+      "name": "set_borrow_rate_curve",
+      "docs": [
+        "Set the borrow rate curve on a klend reserve via CPI.",
+        "Authority must be both pool authority (or admin) AND the klend market owner.",
+        "The curve is validated for monotonicity and bounds before forwarding to klend."
+      ],
+      "discriminator": [
+        85,
+        153,
+        152,
+        170,
+        20,
+        70,
+        239,
+        124
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "pool_config"
+        },
+        {
+          "name": "admin_entry",
+          "docs": [
+            "Optional admin PDA. Pass if signer is not root authority."
+          ],
+          "optional": true
+        },
+        {
+          "name": "lending_market"
+        },
+        {
+          "name": "reserve",
+          "writable": true
+        },
+        {
+          "name": "klend_global_config"
+        },
+        {
+          "name": "klend_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "reserve_type",
+          "type": {
+            "defined": {
+              "name": "ReserveType"
+            }
+          }
+        },
+        {
+          "name": "curve",
+          "type": {
+            "defined": {
+              "name": "BorrowRateCurve"
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "set_gatekeeper_network",
       "docs": [
         "Set the Civic gatekeeper network for self-registration.",
@@ -529,6 +782,199 @@
           }
         }
       ]
+    },
+    {
+      "name": "unwrap",
+      "docs": [
+        "Unwrap d-tokens back into underlying tokens.",
+        "User burns d-tokens and receives underlying tokens from the vault.",
+        "Requires the user to be KYC-whitelisted."
+      ],
+      "discriminator": [
+        126,
+        175,
+        198,
+        14,
+        212,
+        69,
+        50,
+        44
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "pool_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_config.underlying_mint",
+                "account": "PoolConfig"
+              }
+            ]
+          }
+        },
+        {
+          "name": "underlying_mint",
+          "docs": [
+            "The underlying token mint."
+          ]
+        },
+        {
+          "name": "user_underlying_ata",
+          "docs": [
+            "User's underlying token account (destination)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "docs": [
+            "Pool vault — underlying tokens transferred out."
+          ],
+          "writable": true
+        },
+        {
+          "name": "wrapped_mint",
+          "docs": [
+            "Wrapped Token-2022 mint (tokens burned from user)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "user_wrapped_ata",
+          "docs": [
+            "User's d-token account (source — burned)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "underlying_token_program"
+        },
+        {
+          "name": "wrapped_token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "wrap",
+      "docs": [
+        "Wrap underlying tokens into d-tokens (KYC-wrapped).",
+        "User deposits underlying tokens (e.g., tUSDY) into the pool vault,",
+        "and receives an equal amount of d-tokens (e.g., dtUSDY) in return.",
+        "Requires the user to be KYC-whitelisted."
+      ],
+      "discriminator": [
+        178,
+        40,
+        10,
+        189,
+        228,
+        129,
+        186,
+        140
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "pool_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_config.underlying_mint",
+                "account": "PoolConfig"
+              }
+            ]
+          }
+        },
+        {
+          "name": "underlying_mint",
+          "docs": [
+            "The underlying token mint (e.g., tUSDY). Must match pool_config."
+          ]
+        },
+        {
+          "name": "user_underlying_ata",
+          "docs": [
+            "User's token account for the underlying (source)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "docs": [
+            "Pool vault — token account for underlying, owned by pool PDA."
+          ],
+          "writable": true
+        },
+        {
+          "name": "dm_mint_config"
+        },
+        {
+          "name": "wrapped_mint",
+          "writable": true
+        },
+        {
+          "name": "dm_mint_authority"
+        },
+        {
+          "name": "whitelist_entry"
+        },
+        {
+          "name": "user_wrapped_ata",
+          "writable": true
+        },
+        {
+          "name": "delta_mint_program",
+          "address": "13Su8nR5NBzQ7UwFFUiNAH1zH5DQtLyjezhbwRREQkEn"
+        },
+        {
+          "name": "underlying_token_program"
+        },
+        {
+          "name": "wrapped_token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
     }
   ],
   "accounts": [
@@ -561,6 +1007,19 @@
   ],
   "events": [
     {
+      "name": "BorrowRateCurveUpdated",
+      "discriminator": [
+        11,
+        87,
+        9,
+        76,
+        217,
+        189,
+        97,
+        11
+      ]
+    },
+    {
       "name": "PoolCreatedEvent",
       "discriminator": [
         25,
@@ -584,6 +1043,32 @@
         99,
         37,
         150
+      ]
+    },
+    {
+      "name": "UnwrapEvent",
+      "discriminator": [
+        73,
+        129,
+        203,
+        215,
+        50,
+        111,
+        179,
+        20
+      ]
+    },
+    {
+      "name": "WrapEvent",
+      "discriminator": [
+        148,
+        134,
+        198,
+        142,
+        20,
+        51,
+        173,
+        180
       ]
     }
   ],
@@ -612,6 +1097,21 @@
       "code": 6004,
       "name": "InvalidGatewayToken",
       "msg": "Invalid or expired Civic gateway token"
+    },
+    {
+      "code": 6005,
+      "name": "ReserveMismatch",
+      "msg": "Reserve address does not match pool config"
+    },
+    {
+      "code": 6006,
+      "name": "MarketMismatch",
+      "msg": "Lending market does not match pool config"
+    },
+    {
+      "code": 6007,
+      "name": "InvalidCurve",
+      "msg": "Invalid borrow rate curve: must be sorted, bounded, start at 0% and end at 100%"
     }
   ],
   "types": [
@@ -640,6 +1140,67 @@
       }
     },
     {
+      "name": "BorrowRateCurve",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "points",
+            "type": {
+              "array": [
+                {
+                  "defined": {
+                    "name": "CurvePoint"
+                  }
+                },
+                11
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "BorrowRateCurveUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "reserve_type",
+            "type": {
+              "defined": {
+                "name": "ReserveType"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "CurvePoint",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "utilization_rate_bps",
+            "type": "u32"
+          },
+          {
+            "name": "borrow_rate_bps",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
       "name": "ParticipantRole",
       "type": {
         "kind": "enum",
@@ -649,6 +1210,9 @@
           },
           {
             "name": "Liquidator"
+          },
+          {
+            "name": "Escrow"
           }
         ]
       }
@@ -807,6 +1371,20 @@
       }
     },
     {
+      "name": "ReserveType",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Collateral"
+          },
+          {
+            "name": "Borrow"
+          }
+        ]
+      }
+    },
+    {
       "name": "SelfRegisterEvent",
       "type": {
         "kind": "struct",
@@ -822,6 +1400,54 @@
           {
             "name": "gatekeeper_network",
             "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UnwrapEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "underlying_amount",
+            "type": "u64"
+          },
+          {
+            "name": "wrapped_amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "WrapEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "underlying_amount",
+            "type": "u64"
+          },
+          {
+            "name": "wrapped_amount",
+            "type": "u64"
           }
         ]
       }
