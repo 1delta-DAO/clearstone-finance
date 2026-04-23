@@ -20,6 +20,15 @@ import { Hono } from "hono";
 import { Connection, PublicKey } from "@solana/web3.js";
 import type { Env } from "./types.js";
 
+// Canonical Solana programs. Duplicated here to avoid a
+// @solana/spl-token runtime dep in the worker.
+const TOKEN_PROGRAM_ID = new PublicKey(
+  "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+);
+const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
+  "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+);
+
 export const fixedYield = new Hono<{ Bindings: Env }>();
 
 // ---------------------------------------------------------------------------
@@ -102,6 +111,52 @@ export interface UserPositionDto {
   /** LP balance (if any). */
   lpAmount: string;
   /** For auto-roll opt-in vaults, the next scheduled roll ts. */
+  nextAutoRollTs: number | null;
+}
+
+/**
+ * Curator-vault (auto-roll savings account) summary.
+ *
+ * Distinct product from direct PT markets — users deposit base and hold
+ * shares; the curator rebalances across allocated PT markets so
+ * rollovers happen automatically at each maturity.
+ */
+export interface CuratorVaultDto {
+  id: string;
+  label: string;
+  baseSymbol: string;
+  baseMint: string;
+  baseDecimals: number;
+  kycGated: boolean;
+
+  /** Curator-program vault account. */
+  vault: string;
+  /** Curator wallet/program-id who set the allocations. */
+  curator: string;
+  /** Vault-owned base-mint escrow (idle liquidity). */
+  baseEscrow: string;
+
+  totalAssets: string;
+  totalShares: string;
+  feeBps: number;
+  /** Earliest-maturity allocation — what the next auto-roll will target. */
+  nextAutoRollTs: number | null;
+
+  /** Directly-held allocations, for display. */
+  allocations: Array<{
+    market: string;
+    weightBps: number;
+    deployedBase: string;
+  }>;
+}
+
+/**
+ * Curator-vault per-user position.
+ */
+export interface CuratorUserPositionDto {
+  shares: string;
+  /** Pro-rata base-asset value at current NAV (display-only). */
+  baseValue: string;
   nextAutoRollTs: number | null;
 }
 
@@ -218,6 +273,35 @@ fixedYield.get("/vaults/:id/positions/:user", async (c) => {
   });
 });
 
+/**
+ * GET /curator-vaults
+ *
+ * Lists all curator-run auto-roll vaults. Separate from `/vaults`
+ * (which is grouped-by-vault direct-PT markets) because the product
+ * shape is distinct: one share mint + multiple PT allocations vs.
+ * per-maturity PT markets.
+ */
+fixedYield.get("/curator-vaults", async (c) => {
+  const vaults = await getCuratorVaults(c.env);
+  return c.json({ vaults }, 200, {
+    "Cache-Control": "public, max-age=30",
+  });
+});
+
+/**
+ * GET /curator-vaults/:id/positions/:user
+ *
+ * Per-user share balance + implied base value at current NAV.
+ */
+fixedYield.get("/curator-vaults/:id/positions/:user", async (c) => {
+  const vaultId = c.req.param("id");
+  const user = c.req.param("user");
+  const position = await fetchCuratorUserPosition(c.env, vaultId, user);
+  return c.json({ position }, 200, {
+    "Cache-Control": "no-store",
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Internals — v1 replaces these with real RPC reads. Keep the names
 // stable so the route handlers don't change when wiring the real path.
@@ -277,20 +361,72 @@ function groupByVault(markets: MarketDto[]): VaultDto[] {
 }
 
 /**
- * v0 stub — returns a flat "no balance" response. v1 reads the user's
- * PT/YT/LP ATAs from RPC and optionally the auto-roll policy PDA.
+ * Reads the user's PT / YT / LP ATAs via `getMultipleAccountsInfo`
+ * and decodes the `amount` field from each. Falls back to an empty
+ * position if the vault isn't in the registry or the user has no ATAs
+ * yet — both are normal pre-first-deposit states.
+ *
+ * `nextAutoRollTs` stays `null` until the curator program ships the
+ * auto-roll policy PDA; hook that in by deriving the PDA from
+ * (curator_program, vault, user) and decoding `next_maturity`.
  */
 async function fetchUserPosition(
-  _env: Env,
-  _vaultId: string,
-  _user: string
+  env: Env,
+  vaultId: string,
+  user: string
 ): Promise<UserPositionDto> {
-  return {
+  const empty: UserPositionDto = {
     ptAmount: "0",
     ytAmount: "0",
     lpAmount: "0",
     nextAutoRollTs: null,
   };
+
+  // Resolve the registry entry for this vault. Without it we can't know
+  // which mints to query.
+  const registry = parseRegistry(env);
+  const entry = registry.find((e) => e.vault === vaultId);
+  if (!entry) return empty;
+
+  let userPk: PublicKey;
+  let mintPt: PublicKey;
+  let mintYt: PublicKey;
+  let mintLp: PublicKey;
+  try {
+    userPk = new PublicKey(user);
+    mintPt = new PublicKey(entry.accounts.mintPt);
+    mintYt = new PublicKey(entry.accounts.mintYt);
+    mintLp = new PublicKey(entry.accounts.mintLp);
+  } catch {
+    return empty;
+  }
+
+  // ATAs: PT/YT/LP are all plain SPL Token (not Token-2022) per the
+  // core program's init. SY is the only one that might be Token-2022
+  // in a KYC-gated market, and we don't index SY balances here — the
+  // user doesn't hold SY directly in the strip→hold-PT flow.
+  const ataPt = deriveAta(userPk, mintPt, TOKEN_PROGRAM_ID);
+  const ataYt = deriveAta(userPk, mintYt, TOKEN_PROGRAM_ID);
+  const ataLp = deriveAta(userPk, mintLp, TOKEN_PROGRAM_ID);
+
+  const conn = new Connection(env.SOLANA_RPC_URL, "confirmed");
+  const infos = await conn.getMultipleAccountsInfo([ataPt, ataYt, ataLp]);
+
+  return {
+    ptAmount: decodeAmountOrZero(infos[0]?.data),
+    ytAmount: decodeAmountOrZero(infos[1]?.data),
+    lpAmount: decodeAmountOrZero(infos[2]?.data),
+    nextAutoRollTs: null,
+  };
+}
+
+function decodeAmountOrZero(data: Uint8Array | undefined): string {
+  if (!data) return "0";
+  try {
+    return decodeTokenAccountAmount(data).toString();
+  } catch {
+    return "0";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -481,4 +617,379 @@ export function decodeMarketPtPrice(data: Uint8Array): number {
   // Spot price approximation: SY-per-PT from the AMM reserves.
   // Ignores virtual reserves + curve shape; fine for display.
   return Number(sy) / Number(pt);
+}
+
+/**
+ * SPL Token / Token-2022 token-account layout:
+ *   0..32   mint
+ *   32..64  owner
+ *   64..72  amount (u64 LE)  ← we read this
+ *   72..   delegate, state, is_native, delegated_amount, close_authority, ...
+ *
+ * Token-2022 accounts append extension data past byte 165, but the base
+ * `amount` field at offset 64 is stable across both programs.
+ */
+export const TOKEN_ACCOUNT_AMOUNT_OFFSET = 64;
+
+/**
+ * Base byte length of a classic SPL token account (no extensions).
+ * Token-2022 accounts are ≥ this length but may be larger depending on
+ * configured extensions — the amount offset is identical so we only
+ * validate the floor.
+ */
+export const TOKEN_ACCOUNT_BASE_SIZE = 165;
+
+export function decodeTokenAccountAmount(data: Uint8Array): bigint {
+  if (data.length < TOKEN_ACCOUNT_AMOUNT_OFFSET + 8) {
+    throw new Error(
+      `Token account too small: ${data.length} < ${TOKEN_ACCOUNT_AMOUNT_OFFSET + 8}`
+    );
+  }
+  const view = new DataView(
+    data.buffer,
+    data.byteOffset,
+    data.byteLength
+  );
+  return view.getBigUint64(TOKEN_ACCOUNT_AMOUNT_OFFSET, true);
+}
+
+/**
+ * Derive the classic Associated Token Account address for `owner` ⨯
+ * `mint` ⨯ `tokenProgram`. Mirrors the
+ * `@solana/spl-token` `getAssociatedTokenAddressSync` helper without
+ * the runtime dependency.
+ */
+export function deriveAta(
+  owner: PublicKey,
+  mint: PublicKey,
+  tokenProgram: PublicKey = TOKEN_PROGRAM_ID
+): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), tokenProgram.toBuffer(), mint.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  )[0];
+}
+
+// ---------------------------------------------------------------------------
+// Curator-vault decoders
+// ---------------------------------------------------------------------------
+
+/**
+ * `CuratorVault` layout (from
+ * clearstone-fixed-yield/periphery/clearstone_curator/src/lib.rs):
+ *
+ *   8    discriminator
+ *   32   curator
+ *   32   base_mint
+ *   32   base_escrow
+ *   8    total_assets          ← offset 104
+ *   8    total_shares          ← offset 112
+ *   2    fee_bps               ← offset 120
+ *   8    last_harvest_total_assets
+ *   4    allocations vec length ← offset 130
+ *   allocations[]               ← @ 134, each Allocation::SIZE = 50 bytes
+ *   1    bump
+ *
+ * Allocation layout: pubkey(32) + u16(2) + u64(8) + u64(8) = 50.
+ */
+export const CURATOR_VAULT_TOTAL_ASSETS_OFFSET = 104;
+export const CURATOR_VAULT_TOTAL_SHARES_OFFSET = 112;
+export const CURATOR_VAULT_FEE_BPS_OFFSET = 120;
+export const CURATOR_VAULT_ALLOCATIONS_OFFSET = 130;
+export const CURATOR_ALLOCATION_SIZE = 50;
+
+export interface CuratorVaultHeader {
+  curator: string;
+  baseMint: string;
+  baseEscrow: string;
+  totalAssets: bigint;
+  totalShares: bigint;
+  feeBps: number;
+}
+
+export interface CuratorAllocation {
+  market: string;
+  weightBps: number;
+  capBase: bigint;
+  deployedBase: bigint;
+}
+
+export function decodeCuratorVaultHeader(
+  data: Uint8Array
+): CuratorVaultHeader {
+  if (data.length < CURATOR_VAULT_FEE_BPS_OFFSET + 2) {
+    throw new Error(
+      `CuratorVault account too small: ${data.length} < ${CURATOR_VAULT_FEE_BPS_OFFSET + 2}`
+    );
+  }
+  const view = new DataView(
+    data.buffer,
+    data.byteOffset,
+    data.byteLength
+  );
+  const curator = new PublicKey(data.slice(8, 40)).toBase58();
+  const baseMint = new PublicKey(data.slice(40, 72)).toBase58();
+  const baseEscrow = new PublicKey(data.slice(72, 104)).toBase58();
+  const totalAssets = view.getBigUint64(
+    CURATOR_VAULT_TOTAL_ASSETS_OFFSET,
+    true
+  );
+  const totalShares = view.getBigUint64(
+    CURATOR_VAULT_TOTAL_SHARES_OFFSET,
+    true
+  );
+  const feeBps = view.getUint16(CURATOR_VAULT_FEE_BPS_OFFSET, true);
+  return { curator, baseMint, baseEscrow, totalAssets, totalShares, feeBps };
+}
+
+export function decodeCuratorVaultAllocations(
+  data: Uint8Array
+): CuratorAllocation[] {
+  if (data.length < CURATOR_VAULT_ALLOCATIONS_OFFSET + 4) return [];
+  const view = new DataView(
+    data.buffer,
+    data.byteOffset,
+    data.byteLength
+  );
+  const len = view.getUint32(CURATOR_VAULT_ALLOCATIONS_OFFSET, true);
+  const allocStart = CURATOR_VAULT_ALLOCATIONS_OFFSET + 4;
+  const out: CuratorAllocation[] = [];
+  for (let i = 0; i < len; i++) {
+    const off = allocStart + i * CURATOR_ALLOCATION_SIZE;
+    if (off + CURATOR_ALLOCATION_SIZE > data.length) break;
+    out.push({
+      market: new PublicKey(data.slice(off, off + 32)).toBase58(),
+      weightBps: view.getUint16(off + 32, true),
+      capBase: view.getBigUint64(off + 34, true),
+      deployedBase: view.getBigUint64(off + 42, true),
+    });
+  }
+  return out;
+}
+
+/**
+ * `UserPosition` layout (for curator auto-roll vaults):
+ *
+ *   8    discriminator
+ *   32   vault
+ *   32   owner
+ *   8    shares                ← offset 72
+ */
+export const CURATOR_USER_POSITION_SHARES_OFFSET = 72;
+
+export function decodeCuratorUserPositionShares(data: Uint8Array): bigint {
+  if (data.length < CURATOR_USER_POSITION_SHARES_OFFSET + 8) {
+    throw new Error(
+      `UserPosition too small: ${data.length} < ${CURATOR_USER_POSITION_SHARES_OFFSET + 8}`
+    );
+  }
+  const view = new DataView(
+    data.buffer,
+    data.byteOffset,
+    data.byteLength
+  );
+  return view.getBigUint64(CURATOR_USER_POSITION_SHARES_OFFSET, true);
+}
+
+// ---------------------------------------------------------------------------
+// Curator-vault fetchers
+// ---------------------------------------------------------------------------
+
+/**
+ * Operator-curated list of auto-roll vaults. Separate env var so
+ * operators can publish curator vaults independently of direct PT
+ * markets. Each entry points at a live `CuratorVault` account; the
+ * indexer fills in totals + allocations dynamically.
+ */
+export interface CuratorVaultRegistryEntry {
+  id: string;
+  label: string;
+  baseSymbol: string;
+  baseDecimals: number;
+  kycGated: boolean;
+  vault: string;
+}
+
+function parseCuratorRegistry(env: Env): CuratorVaultRegistryEntry[] {
+  const raw = (env as unknown as { CURATOR_VAULT_REGISTRY?: string })
+    .CURATOR_VAULT_REGISTRY;
+  if (!raw) return [];
+  try {
+    return JSON.parse(raw) as CuratorVaultRegistryEntry[];
+  } catch (err) {
+    console.error("CURATOR_VAULT_REGISTRY is not valid JSON:", err);
+    return [];
+  }
+}
+
+async function getCuratorVaults(env: Env): Promise<CuratorVaultDto[]> {
+  const registry = parseCuratorRegistry(env);
+  if (registry.length === 0) return [];
+
+  const conn = new Connection(env.SOLANA_RPC_URL, "confirmed");
+  const keys = registry.map((e) => new PublicKey(e.vault));
+  const infos = await conn.getMultipleAccountsInfo(keys);
+
+  // Resolve the maturities of each allocation market in one batched call.
+  const allocations: CuratorAllocation[][] = [];
+  const marketPubkeys = new Set<string>();
+  for (let i = 0; i < registry.length; i++) {
+    const info = infos[i];
+    if (!info) {
+      allocations.push([]);
+      continue;
+    }
+    const allocs = decodeCuratorVaultAllocations(info.data);
+    allocations.push(allocs);
+    for (const a of allocs) marketPubkeys.add(a.market);
+  }
+
+  const marketKeys = [...marketPubkeys].map((k) => new PublicKey(k));
+  const marketInfos = marketKeys.length
+    ? await conn.getMultipleAccountsInfo(marketKeys)
+    : [];
+  const marketMaturity = new Map<string, number | null>();
+  for (let i = 0; i < marketKeys.length; i++) {
+    const info = marketInfos[i];
+    if (!info) {
+      marketMaturity.set(marketKeys[i].toBase58(), null);
+      continue;
+    }
+    // MarketTwo carries the maturity indirectly via financials.expiration_ts @ 365.
+    if (info.data.length >= 365 + 8) {
+      const view = new DataView(
+        info.data.buffer,
+        info.data.byteOffset,
+        info.data.byteLength
+      );
+      marketMaturity.set(
+        marketKeys[i].toBase58(),
+        Number(view.getBigUint64(365, true))
+      );
+    } else {
+      marketMaturity.set(marketKeys[i].toBase58(), null);
+    }
+  }
+
+  const out: CuratorVaultDto[] = [];
+  for (let i = 0; i < registry.length; i++) {
+    const entry = registry[i];
+    const info = infos[i];
+    if (!info) {
+      console.warn(`Missing CuratorVault account for ${entry.id}`);
+      continue;
+    }
+    const header = decodeCuratorVaultHeader(info.data);
+    const allocs = allocations[i];
+
+    // Earliest-maturity allocation dictates when the next rebalance fires.
+    let nextRoll: number | null = null;
+    for (const a of allocs) {
+      const m = marketMaturity.get(a.market);
+      if (m && (nextRoll === null || m < nextRoll)) nextRoll = m;
+    }
+
+    out.push({
+      id: entry.id,
+      label: entry.label,
+      baseSymbol: entry.baseSymbol,
+      baseMint: header.baseMint,
+      baseDecimals: entry.baseDecimals,
+      kycGated: entry.kycGated,
+      vault: entry.vault,
+      curator: header.curator,
+      baseEscrow: header.baseEscrow,
+      totalAssets: header.totalAssets.toString(),
+      totalShares: header.totalShares.toString(),
+      feeBps: header.feeBps,
+      nextAutoRollTs: nextRoll,
+      allocations: allocs.map((a) => ({
+        market: a.market,
+        weightBps: a.weightBps,
+        deployedBase: a.deployedBase.toString(),
+      })),
+    });
+  }
+  return out;
+}
+
+/**
+ * Per-user curator-vault position. Fetches the user_pos PDA and the
+ * parent vault (for NAV) in one batch.
+ */
+async function fetchCuratorUserPosition(
+  env: Env,
+  vaultId: string,
+  user: string
+): Promise<CuratorUserPositionDto> {
+  const empty: CuratorUserPositionDto = {
+    shares: "0",
+    baseValue: "0",
+    nextAutoRollTs: null,
+  };
+
+  let vaultPk: PublicKey;
+  let userPk: PublicKey;
+  try {
+    vaultPk = new PublicKey(vaultId);
+    userPk = new PublicKey(user);
+  } catch {
+    return empty;
+  }
+
+  // user_pos PDA: [b"user_pos", vault, owner] under the curator program.
+  const curatorProgram = new PublicKey(
+    "831zw8r2fGwRB1QpuRU3gZHZBFYYHBHeG7RbKUz9ssGm"
+  );
+  const [posPk] = PublicKey.findProgramAddressSync(
+    [
+      new TextEncoder().encode("user_pos"),
+      vaultPk.toBuffer(),
+      userPk.toBuffer(),
+    ],
+    curatorProgram
+  );
+
+  const conn = new Connection(env.SOLANA_RPC_URL, "confirmed");
+  const [posInfo, vaultInfo] = await conn.getMultipleAccountsInfo([
+    posPk,
+    vaultPk,
+  ]);
+  if (!posInfo) return empty;
+
+  const shares = decodeCuratorUserPositionShares(posInfo.data);
+  if (shares === 0n) return empty;
+
+  let baseValue = 0n;
+  let nextRoll: number | null = null;
+  if (vaultInfo) {
+    const header = decodeCuratorVaultHeader(vaultInfo.data);
+    if (header.totalShares > 0n) {
+      // Pro-rata NAV. bigint-safe multiplication.
+      baseValue = (shares * header.totalAssets) / header.totalShares;
+    }
+    // Resolve earliest-maturity allocation for display.
+    const allocs = decodeCuratorVaultAllocations(vaultInfo.data);
+    if (allocs.length > 0) {
+      const marketKeys = allocs.map((a) => new PublicKey(a.market));
+      const infos = await conn.getMultipleAccountsInfo(marketKeys);
+      for (let i = 0; i < infos.length; i++) {
+        const info = infos[i];
+        if (!info || info.data.length < 365 + 8) continue;
+        const view = new DataView(
+          info.data.buffer,
+          info.data.byteOffset,
+          info.data.byteLength
+        );
+        const expiry = Number(view.getBigUint64(365, true));
+        if (nextRoll === null || expiry < nextRoll) nextRoll = expiry;
+      }
+    }
+  }
+
+  return {
+    shares: shares.toString(),
+    baseValue: baseValue.toString(),
+    nextAutoRollTs: nextRoll,
+  };
 }

@@ -21,9 +21,20 @@ import { useFixedYieldMarkets } from "../hooks/useFixedYieldMarkets";
 import type { FixedYieldMarket } from "../hooks/useFixedYieldMarkets";
 import { usePtPositions } from "../hooks/usePtPositions";
 import type { PtPosition } from "../hooks/usePtPositions";
+import {
+  useCuratorVaults,
+  useCuratorVaultPositions,
+} from "../hooks/useCuratorVaults";
+import type { CuratorVault } from "../hooks/useCuratorVaults";
 import { MarketCard } from "../components/MarketCard";
 import { DepositPtModal } from "../components/DepositPtModal";
 import { PtPositionCard } from "../components/PtPositionCard";
+import { SavingsAccountCard } from "../components/SavingsAccountCard";
+import {
+  SavingsDepositModal,
+  type SavingsDepositSubmission,
+} from "../components/SavingsDepositModal";
+import { CuratorPositionCard } from "../components/CuratorPositionCard";
 
 /**
  * Retail-facing fixed-yield savings page.
@@ -46,8 +57,14 @@ export function TermDepositsApp() {
   const { connection } = useConnection();
   const { markets, loading, error: marketsError } = useFixedYieldMarkets();
   const { positions, refresh: refreshPositions } = usePtPositions(markets);
+  const { vaults: curatorVaults } = useCuratorVaults();
+  const { positions: curatorPositions } = useCuratorVaultPositions(
+    curatorVaults,
+    publicKey ?? null
+  );
 
   const [selected, setSelected] = useState<FixedYieldMarket | null>(null);
+  const [selectedVault, setSelectedVault] = useState<CuratorVault | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [redeemingId, setRedeemingId] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
@@ -179,6 +196,130 @@ export function TermDepositsApp() {
   // -------------------------------------------------------------------------
   // Redeem flow: build buildZapOutToBaseV0Tx, sign, send.
   // -------------------------------------------------------------------------
+
+  // -------------------------------------------------------------------------
+  // Savings-account (curator-vault) deposit. One-tx flow:
+  //   idempotent ATA → curator.deposit(amount_base)
+  // -------------------------------------------------------------------------
+
+  const handleSavingsDeposit = useCallback(
+    async (args: SavingsDepositSubmission) => {
+      const { vault, amountBase, enableAutoRoll, maxSlippageBps, ttlSlots } =
+        args;
+      if (!publicKey || !signTransaction) return;
+      reset();
+      setSubmitting(true);
+
+      try {
+        const baseSrc = getAssociatedTokenAddressSync(
+          vault.baseMint,
+          publicKey,
+          false,
+          TOKEN_PROGRAM_ID,
+          ASSOCIATED_TOKEN_PROGRAM_ID
+        );
+
+        const position = fixedYield.curator.curatorUserPositionPda(
+          vault.vault,
+          publicKey
+        );
+
+        const preIxs: TransactionInstruction[] = [
+          createAssociatedTokenAccountIdempotentInstruction(
+            publicKey,
+            baseSrc,
+            publicKey,
+            vault.baseMint,
+            TOKEN_PROGRAM_ID,
+            ASSOCIATED_TOKEN_PROGRAM_ID
+          ),
+        ];
+
+        const depositIx = fixedYield.curator.buildCuratorDeposit({
+          owner: publicKey,
+          vault: vault.vault,
+          baseMint: vault.baseMint,
+          baseEscrow: vault.baseEscrow,
+          baseSrc,
+          position,
+          amountBase,
+        });
+
+        const ixs: TransactionInstruction[] = [...preIxs, depositIx];
+
+        // If the user enabled auto-roll, bundle a create_delegation ix.
+        // Single signature covers both — deposit and delegation happen
+        // atomically; if either fails, nothing persists.
+        if (enableAutoRoll) {
+          ixs.push(
+            fixedYield.delegation.buildCreateDelegation({
+              user: publicKey,
+              vault: vault.vault,
+              maxSlippageBps,
+              ttlSlots,
+            })
+          );
+        }
+
+        const { blockhash } = await connection.getLatestBlockhash();
+        const tx = fixedYield.tx.packV0Tx({
+          ixs,
+          payer: publicKey,
+          recentBlockhash: blockhash,
+          lookupTables: [],
+          computeBudget: { unitLimit: 240_000 },
+        });
+
+        const signed = await signTransaction(tx);
+        const sig = await connection.sendRawTransaction(signed.serialize());
+        await connection.confirmTransaction(sig, "confirmed");
+        setStatusMsg(
+          enableAutoRoll
+            ? `Deposit + auto-roll enabled: ${sig.slice(0, 12)}…`
+            : `Deposit confirmed: ${sig.slice(0, 12)}…`
+        );
+      } catch (err) {
+        setErrorMsg(
+          err instanceof Error ? err.message : "Savings deposit failed"
+        );
+      } finally {
+        setSubmitting(false);
+        setSelectedVault(null);
+      }
+    },
+    [publicKey, signTransaction, connection]
+  );
+
+  // Revoke an active delegation. Single-ix tx; UX parity with deposit.
+  const handleRevokeDelegation = useCallback(
+    async (vault: CuratorVault) => {
+      if (!publicKey || !signTransaction) return;
+      reset();
+      try {
+        const ix = fixedYield.delegation.buildCloseDelegation({
+          user: publicKey,
+          vault: vault.vault,
+        });
+        const { blockhash } = await connection.getLatestBlockhash();
+        const tx = fixedYield.tx.packV0Tx({
+          ixs: [ix],
+          payer: publicKey,
+          recentBlockhash: blockhash,
+          lookupTables: [],
+          computeBudget: { unitLimit: 50_000 },
+        });
+        const signed = await signTransaction(tx);
+        const sig = await connection.sendRawTransaction(signed.serialize());
+        await connection.confirmTransaction(sig, "confirmed");
+        setStatusMsg(`Auto-roll revoked: ${sig.slice(0, 12)}…`);
+      } catch (err) {
+        setErrorMsg(
+          err instanceof Error ? err.message : "Revoke failed"
+        );
+      }
+    },
+    [publicKey, signTransaction, connection]
+  );
 
   const handleRedeem = useCallback(
     async (position: PtPosition, amountPy: BN) => {
@@ -342,26 +483,62 @@ export function TermDepositsApp() {
           )}
         </section>
 
-        {connected && positions.length > 0 && (
+        {curatorVaults.length > 0 && (
           <section className="mt-10">
-            <h2 className="text-xl font-semibold mb-4">Your positions</h2>
+            <h2 className="text-xl font-semibold mb-1">Auto-roll savings</h2>
+            <p className="text-sm opacity-70 mb-4">
+              Deposit once and let the curator reroll your position across
+              maturities. Withdraw any time up to vault idle liquidity.
+            </p>
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {positions.map((p) => (
-                <PtPositionCard
-                  key={p.market.id}
-                  position={p}
-                  redeeming={redeemingId === p.market.id}
-                  onRedeem={handleRedeem}
+              {curatorVaults.map((v) => (
+                <SavingsAccountCard
+                  key={v.id}
+                  vault={v}
+                  onDeposit={(vk) => setSelectedVault(vk)}
                 />
               ))}
             </div>
           </section>
         )}
 
+        {connected &&
+          (positions.length > 0 || curatorPositions.length > 0) && (
+            <section className="mt-10">
+              <h2 className="text-xl font-semibold mb-4">Your positions</h2>
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {positions.map((p) => (
+                  <PtPositionCard
+                    key={p.market.id}
+                    position={p}
+                    redeeming={redeemingId === p.market.id}
+                    onRedeem={handleRedeem}
+                  />
+                ))}
+                {curatorPositions.map((p) => (
+                  <CuratorPositionCard
+                    key={`sav-${p.vault.id}`}
+                    position={p}
+                    user={publicKey!}
+                    connection={connection}
+                    onRevoke={() => handleRevokeDelegation(p.vault)}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
         <DepositPtModal
           market={selected}
           onClose={() => (submitting ? null : setSelected(null))}
           onSubmit={handleDeposit}
+          submitting={submitting}
+        />
+
+        <SavingsDepositModal
+          vault={selectedVault}
+          onClose={() => (submitting ? null : setSelectedVault(null))}
+          onSubmit={handleSavingsDeposit}
           submitting={submitting}
         />
       </main>

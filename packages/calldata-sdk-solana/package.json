@@ -13,7 +13,9 @@
   },
   "scripts": {
     "build": "tsc",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "build:test": "tsc -p tsconfig.test.json",
+    "test": "pnpm run build:test && node --test 'dist-test/test/**/*.test.js'"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",

@@ -16,6 +16,7 @@
  * hammer RPC.
  */
 import { Hono } from "hono";
+import { PublicKey } from "@solana/web3.js";
 import type { Env } from "./types.js";
 export declare const fixedYield: Hono<{
     Bindings: Env;
@@ -86,6 +87,47 @@ export interface UserPositionDto {
     /** LP balance (if any). */
     lpAmount: string;
     /** For auto-roll opt-in vaults, the next scheduled roll ts. */
+    nextAutoRollTs: number | null;
+}
+/**
+ * Curator-vault (auto-roll savings account) summary.
+ *
+ * Distinct product from direct PT markets — users deposit base and hold
+ * shares; the curator rebalances across allocated PT markets so
+ * rollovers happen automatically at each maturity.
+ */
+export interface CuratorVaultDto {
+    id: string;
+    label: string;
+    baseSymbol: string;
+    baseMint: string;
+    baseDecimals: number;
+    kycGated: boolean;
+    /** Curator-program vault account. */
+    vault: string;
+    /** Curator wallet/program-id who set the allocations. */
+    curator: string;
+    /** Vault-owned base-mint escrow (idle liquidity). */
+    baseEscrow: string;
+    totalAssets: string;
+    totalShares: string;
+    feeBps: number;
+    /** Earliest-maturity allocation — what the next auto-roll will target. */
+    nextAutoRollTs: number | null;
+    /** Directly-held allocations, for display. */
+    allocations: Array<{
+        market: string;
+        weightBps: number;
+        deployedBase: string;
+    }>;
+}
+/**
+ * Curator-vault per-user position.
+ */
+export interface CuratorUserPositionDto {
+    shares: string;
+    /** Pro-rata base-asset value at current NAV (display-only). */
+    baseValue: string;
     nextAutoRollTs: number | null;
 }
 /**
@@ -166,4 +208,93 @@ export declare function decodeVaultMaturity(data: Uint8Array): number;
 export declare const MARKET_PT_BALANCE_OFFSET = 373;
 export declare const MARKET_SY_BALANCE_OFFSET = 381;
 export declare function decodeMarketPtPrice(data: Uint8Array): number;
+/**
+ * SPL Token / Token-2022 token-account layout:
+ *   0..32   mint
+ *   32..64  owner
+ *   64..72  amount (u64 LE)  ← we read this
+ *   72..   delegate, state, is_native, delegated_amount, close_authority, ...
+ *
+ * Token-2022 accounts append extension data past byte 165, but the base
+ * `amount` field at offset 64 is stable across both programs.
+ */
+export declare const TOKEN_ACCOUNT_AMOUNT_OFFSET = 64;
+/**
+ * Base byte length of a classic SPL token account (no extensions).
+ * Token-2022 accounts are ≥ this length but may be larger depending on
+ * configured extensions — the amount offset is identical so we only
+ * validate the floor.
+ */
+export declare const TOKEN_ACCOUNT_BASE_SIZE = 165;
+export declare function decodeTokenAccountAmount(data: Uint8Array): bigint;
+/**
+ * Derive the classic Associated Token Account address for `owner` ⨯
+ * `mint` ⨯ `tokenProgram`. Mirrors the
+ * `@solana/spl-token` `getAssociatedTokenAddressSync` helper without
+ * the runtime dependency.
+ */
+export declare function deriveAta(owner: PublicKey, mint: PublicKey, tokenProgram?: PublicKey): PublicKey;
+/**
+ * `CuratorVault` layout (from
+ * clearstone-fixed-yield/periphery/clearstone_curator/src/lib.rs):
+ *
+ *   8    discriminator
+ *   32   curator
+ *   32   base_mint
+ *   32   base_escrow
+ *   8    total_assets          ← offset 104
+ *   8    total_shares          ← offset 112
+ *   2    fee_bps               ← offset 120
+ *   8    last_harvest_total_assets
+ *   4    allocations vec length ← offset 130
+ *   allocations[]               ← @ 134, each Allocation::SIZE = 50 bytes
+ *   1    bump
+ *
+ * Allocation layout: pubkey(32) + u16(2) + u64(8) + u64(8) = 50.
+ */
+export declare const CURATOR_VAULT_TOTAL_ASSETS_OFFSET = 104;
+export declare const CURATOR_VAULT_TOTAL_SHARES_OFFSET = 112;
+export declare const CURATOR_VAULT_FEE_BPS_OFFSET = 120;
+export declare const CURATOR_VAULT_ALLOCATIONS_OFFSET = 130;
+export declare const CURATOR_ALLOCATION_SIZE = 50;
+export interface CuratorVaultHeader {
+    curator: string;
+    baseMint: string;
+    baseEscrow: string;
+    totalAssets: bigint;
+    totalShares: bigint;
+    feeBps: number;
+}
+export interface CuratorAllocation {
+    market: string;
+    weightBps: number;
+    capBase: bigint;
+    deployedBase: bigint;
+}
+export declare function decodeCuratorVaultHeader(data: Uint8Array): CuratorVaultHeader;
+export declare function decodeCuratorVaultAllocations(data: Uint8Array): CuratorAllocation[];
+/**
+ * `UserPosition` layout (for curator auto-roll vaults):
+ *
+ *   8    discriminator
+ *   32   vault
+ *   32   owner
+ *   8    shares                ← offset 72
+ */
+export declare const CURATOR_USER_POSITION_SHARES_OFFSET = 72;
+export declare function decodeCuratorUserPositionShares(data: Uint8Array): bigint;
+/**
+ * Operator-curated list of auto-roll vaults. Separate env var so
+ * operators can publish curator vaults independently of direct PT
+ * markets. Each entry points at a live `CuratorVault` account; the
+ * indexer fills in totals + allocations dynamically.
+ */
+export interface CuratorVaultRegistryEntry {
+    id: string;
+    label: string;
+    baseSymbol: string;
+    baseDecimals: number;
+    kycGated: boolean;
+    vault: string;
+}
 //# sourceMappingURL=fixed-yield.d.ts.map

@@ -308,6 +308,34 @@ importers:
         specifier: ^0.25.0
         version: 0.25.0(rollup@4.59.0)(vite@6.4.1(@types/node@25.5.0)(jiti@2.6.1)(lightningcss@1.32.0)(terser@5.46.0)(tsx@4.21.0)(yaml@2.8.2))
 
+  packages/keeper-auto-roll:
+    dependencies:
+      '@delta/calldata-sdk-solana':
+        specifier: workspace:*
+        version: link:../calldata-sdk-solana
+      '@solana/spl-token':
+        specifier: ^0.4.14
+        version: 0.4.14(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10))(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)(utf-8-validate@5.0.10)
+      '@solana/web3.js':
+        specifier: ^1.98.0
+        version: 1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)
+      bn.js:
+        specifier: ^5.2.1
+        version: 5.2.3
+    devDependencies:
+      '@types/bn.js':
+        specifier: ^5.1.5
+        version: 5.2.0
+      '@types/node':
+        specifier: ^20.19.37
+        version: 20.19.37
+      tsx:
+        specifier: ^4.21.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+
   packages/programs:
     dependencies:
       '@coral-xyz/anchor':

@@ -33,3 +33,6 @@ export * as builders from "./builders.js";
 export * as zap from "./zap.js";
 export * as quote from "./quote.js";
 export * as tx from "./tx.js";
+export * as curator from "./curator.js";
+export * as curatorAdmin from "./curator-admin.js";
+export * as delegation from "./delegation.js";
