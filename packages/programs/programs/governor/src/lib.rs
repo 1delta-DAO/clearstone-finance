@@ -5,10 +5,11 @@ use anchor_spl::token_interface;
 use delta_mint::cpi as delta_cpi;
 use delta_mint::cpi::accounts as delta_accounts;
 use delta_mint::program::DeltaMint as DeltaMintProgram;
-use anchor_lang::AccountDeserialize;
-use solana_gateway_anchor::Pass;
 
-declare_id!("BrZYcbPBt9nW4b6xUSodwXRfAfRNZTCzthp1ywMG3KJh");
+mod civic_pass;
+use civic_pass::Pass;
+
+declare_id!("6xqW3D1ebp5WjbYh4vwar7ponxrpEaQiVG6uhBYVZtJi");
 
 #[program]
 pub mod governor {
@@ -275,7 +276,7 @@ pub mod governor {
 
         // Verify Civic gateway token
         let gateway_data = ctx.accounts.gateway_token.try_borrow_data()?;
-        let pass = Pass::try_deserialize_unchecked(&mut &gateway_data[..])
+        let pass = Pass::try_deserialize_unchecked(&gateway_data[..])
             .map_err(|_| GovernorError::InvalidGatewayToken)?;
         require!(
             pass.valid(ctx.accounts.user.key, &pool.gatekeeper_network),

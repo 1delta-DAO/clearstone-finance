@@ -14,8 +14,11 @@
  *     -p ./tsconfig.json -t 1000000 tests/kamino-market.fork.ts
  */
 
+import { createRequire } from "node:module";
 import { startAnchor } from "solana-bankrun";
 import { BankrunProvider } from "anchor-bankrun";
+
+const require = createRequire(import.meta.url);
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import {

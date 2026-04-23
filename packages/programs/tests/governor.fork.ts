@@ -15,8 +15,11 @@
  *     -p ./tsconfig.json -t 1000000 tests/governor.fork.ts
  */
 
+import { createRequire } from "node:module";
 import { startAnchor } from "solana-bankrun";
 import { BankrunProvider } from "anchor-bankrun";
+
+const require = createRequire(import.meta.url);
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import {
@@ -344,6 +347,7 @@ describe("governor-pool-creation (mainnet fork)", () => {
       .accounts({
         authority: provider.wallet.publicKey,
         poolConfig: poolConfigPda,
+        adminEntry: null,
         dmMintConfig: dmMintConfigPda,
         wallet: provider.wallet.publicKey,
         whitelistEntry: operatorWhitelistPda,
@@ -390,6 +394,7 @@ describe("governor-pool-creation (mainnet fork)", () => {
       .accounts({
         authority: provider.wallet.publicKey,
         poolConfig: poolConfigPda,
+        adminEntry: null,
         dmMintConfig: dmMintConfigPda,
         wrappedMint: wrappedMintKeypair.publicKey,
         dmMintAuthority: dmMintAuthorityPda,
@@ -418,6 +423,7 @@ describe("governor-pool-creation (mainnet fork)", () => {
       .accounts({
         authority: provider.wallet.publicKey,
         poolConfig: poolConfigPda,
+        adminEntry: null,
         dmMintConfig: dmMintConfigPda,
         wallet: liquidatorBot.publicKey,
         whitelistEntry: liquidatorWhitelistPda,
@@ -448,6 +454,7 @@ describe("governor-pool-creation (mainnet fork)", () => {
         .accounts({
           authority: provider.wallet.publicKey,
           poolConfig: poolConfigPda,
+          adminEntry: null,
           dmMintConfig: dmMintConfigPda,
           wrappedMint: wrappedMintKeypair.publicKey,
           dmMintAuthority: dmMintAuthorityPda,

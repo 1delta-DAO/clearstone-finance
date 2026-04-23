@@ -11,7 +11,7 @@ use spl_token_2022::{
     state::Mint as Token2022Mint,
 };
 
-declare_id!("13Su8nR5NBzQ7UwFFUiNAH1zH5DQtLyjezhbwRREQkEn");
+declare_id!("BKprvLqNUDCGrpxddppHHQ3UBhof8J5axyexDyctX1xy");
 
 #[program]
 pub mod delta_mint {

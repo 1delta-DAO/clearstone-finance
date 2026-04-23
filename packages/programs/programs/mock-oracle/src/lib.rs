@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("7qABPpPwvS7u7Y5vgDKZdSqLnc6N9FasVnG2iv7qe4vm");
+declare_id!("BbjcMyV2yQaxsgTZAdMFXxFiXSeaUWggoRJMLvZhYFzU");
 
 /// TradeDesk Oracle — Institutional price feed management.
 ///

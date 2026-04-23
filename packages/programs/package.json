@@ -33,7 +33,7 @@
     "verify-testnet": "npx tsx scripts/verify-testnet.ts"
   },
   "dependencies": {
-    "@coral-xyz/anchor": "^0.30.1",
+    "@coral-xyz/anchor": "^0.31.1",
     "@solana/web3.js": "^1.98.0",
     "bn.js": "^5.2.3"
   },
