@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy --name stablehacks-backend-edge",
-    "types": "wrangler types"
+    "types": "wrangler types",
+    "typecheck": "tsc --noEmit",
+    "build:test": "tsc -p tsconfig.test.json",
+    "test": "pnpm run build:test && node --test 'dist-test/test/**/*.test.js'"
   },
   "dependencies": {
     "@noble/ed25519": "^3.0.1",
@@ -17,6 +20,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.0.0",
+    "@types/node": "^20.19.37",
     "typescript": "^5.5.0",
     "wrangler": "^4.0.0"
   }

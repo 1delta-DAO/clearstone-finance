@@ -19,4 +19,5 @@
 
 export * as admin from "./admin/index.js";
 export * as lending from "./lending/index.js";
+export * as fixedYield from "./fixed-yield/index.js";
 export * from "./common/index.js";

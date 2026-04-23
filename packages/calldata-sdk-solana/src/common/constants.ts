@@ -1,8 +1,19 @@
 import { PublicKey } from "@solana/web3.js";
 
-// Program IDs
-export const DELTA_MINT_PROGRAM_ID = new PublicKey("13Su8nR5NBzQ7UwFFUiNAH1zH5DQtLyjezhbwRREQkEn");
-export const GOVERNOR_PROGRAM_ID = new PublicKey("BrZYcbPBt9nW4b6xUSodwXRfAfRNZTCzthp1ywMG3KJh");
+// Program IDs — KYC + lending (clearstone-finance)
+// NOTE: delta-mint + governor IDs regenerated during the anchor 0.31 upgrade.
+export const DELTA_MINT_PROGRAM_ID = new PublicKey("BKprvLqNUDCGrpxddppHHQ3UBhof8J5axyexDyctX1xy");
+export const GOVERNOR_PROGRAM_ID = new PublicKey("6xqW3D1ebp5WjbYh4vwar7ponxrpEaQiVG6uhBYVZtJi");
+
+// Program IDs — fixed-yield stack (clearstone-fixed-yield fork).
+// These are the declare_id!'s on the fork's mainline branch.
+export const CLEARSTONE_CORE_PROGRAM_ID = new PublicKey("EKpLcVc6rky1ah28NMZFoT2oSXkAKWcEsr6nbZziTWbC");
+export const CLEARSTONE_ROUTER_PROGRAM_ID = new PublicKey("DenU4j4oV4wCMCsytrfYuFwAumTE1abFAPmpYDpjWmsW");
+export const CLEARSTONE_CURATOR_PROGRAM_ID = new PublicKey("831zw8r2fGwRB1QpuRU3gZHZBFYYHBHeG7RbKUz9ssGm");
+export const KAMINO_SY_ADAPTER_PROGRAM_ID = new PublicKey("29tisXppYM4NcAEJfzMe1aqyuf2M7w9StTtiXBHxTKxd");
+export const GENERIC_EXCHANGE_RATE_SY_PROGRAM_ID = new PublicKey("DZEqpkctMmB1Xq6foy1KnP3VayVFgJfykzi49fpWZ8M6");
+
+// External programs
 export const KLEND_PROGRAM_ID = new PublicKey("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD");
 export const TOKEN_2022_PROGRAM_ID = new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 export const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
