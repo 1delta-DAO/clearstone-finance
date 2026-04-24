@@ -86,8 +86,14 @@ async function deriveCrankAccountsFor(conn, vault, marketPk) {
         return null;
     const syProgram = new PublicKey(coreVaultInfo.data.slice(43, 75));
     const [coreEventAuthority] = PublicKey.findProgramAddressSync([new TextEncoder().encode("__event_authority")], new PublicKey("EKpLcVc6rky1ah28NMZFoT2oSXkAKWcEsr6nbZziTWbC"));
-    const [syMarket] = PublicKey.findProgramAddressSync([new TextEncoder().encode("sy_market"), baseMintPk.toBuffer()], syProgram);
-    const adapterBaseVault = getAssociatedTokenAddressSync(baseMintPk, syMarket, true, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+    // See the comment in roll.ts — prefer snapshot-supplied adapter keys
+    // for non-generic SY adapters.
+    const syMarket = vault.adapter
+        ? new PublicKey(vault.adapter.syMarket)
+        : PublicKey.findProgramAddressSync([new TextEncoder().encode("sy_market"), baseMintPk.toBuffer()], syProgram)[0];
+    const adapterBaseVault = vault.adapter
+        ? new PublicKey(vault.adapter.adapterBaseVault)
+        : getAssociatedTokenAddressSync(baseMintPk, syMarket, true, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
     const vaultSyAta = getAssociatedTokenAddressSync(mintSy, vaultPk, true, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
     const vaultPtAta = getAssociatedTokenAddressSync(mintPt, vaultPk, true, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
     const vaultLpAta = getAssociatedTokenAddressSync(mintLp, vaultPk, true, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);

@@ -3,7 +3,8 @@
   "private": true,
   "scripts": {
     "build": "pnpm -r build",
-    "test": "pnpm -r test",
+    "test": "pnpm --filter @delta/calldata-sdk-solana --filter keeper-auto-roll --filter backend-edge run test",
+    "test:all": "pnpm -r test",
     "dev:console": "pnpm --filter frontend-console dev",
     "dev:retail": "pnpm --filter frontend-retail dev",
     "dev:institutional": "pnpm --filter frontend-institutional dev",

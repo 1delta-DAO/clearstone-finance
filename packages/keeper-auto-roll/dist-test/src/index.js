@@ -20,9 +20,12 @@ import { fetchCuratorVaults } from "./edge.js";
 import { decideRoll, executeRoll } from "./roll.js";
 import { decideDelegatedRoll, executeDelegatedRoll, } from "./roll-delegated.js";
 import { scanDelegations, filterLive } from "./delegations.js";
-async function tick() {
-    const cfg = loadConfig();
-    const conn = new Connection(cfg.rpcUrl, "confirmed");
+/**
+ * Run a single tick with injected dependencies. Extracted from `tick()`
+ * so tests can supply their own Connection + config without hitting the
+ * env-var config loader or a real RPC.
+ */
+export async function runTick(conn, cfg) {
     const keeperPk = cfg.curatorKeypair.publicKey.toBase58();
     const nowTs = Math.floor(Date.now() / 1000);
     const nowSlot = BigInt(await conn.getSlot("confirmed"));
@@ -119,6 +122,11 @@ async function tick() {
     }
     log({ event: "tick.end" });
 }
+async function tick() {
+    const cfg = loadConfig();
+    const conn = new Connection(cfg.rpcUrl, "confirmed");
+    return runTick(conn, cfg);
+}
 function countDelegations(byVault) {
     let n = 0;
     for (const list of byVault.values())
@@ -157,8 +165,14 @@ async function main() {
 function sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
 }
-main().catch((err) => {
-    console.error("fatal:", err);
-    process.exit(1);
-});
+// Only auto-run when invoked as a CLI. Importing the module for tests
+// should be side-effect-free — previously `main()` fired on import,
+// which calls `loadConfig()` and throws on missing env vars.
+if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+    main().catch((err) => {
+        console.error("fatal:", err);
+        process.exit(1);
+    });
+}
+export { main, tick };
 //# sourceMappingURL=index.js.map

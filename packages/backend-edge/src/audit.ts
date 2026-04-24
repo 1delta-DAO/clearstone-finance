@@ -23,7 +23,10 @@ audit.post("/log", async (c) => {
     timestamp: new Date().toISOString(),
   };
 
-  const key = `audit:${entry.wallet}:${Date.now()}`;
+  // Date.now() alone collides when two log calls land in the same ms
+  // — append a uuid so every entry is a distinct KV key and the index
+  // is append-only without losing writes.
+  const key = `audit:${entry.wallet}:${Date.now()}:${crypto.randomUUID()}`;
 
   // Write entry
   await c.env.AUDIT_KV.put(key, JSON.stringify(entry), {

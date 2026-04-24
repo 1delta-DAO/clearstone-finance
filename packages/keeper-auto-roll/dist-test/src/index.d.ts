@@ -14,5 +14,15 @@
  * Legacy curator-signed cranks require the curator key — see
  * /KEEPER_PERMISSIONS.md.
  */
-export {};
+import { Connection } from "@solana/web3.js";
+import { type KeeperConfig } from "./config.js";
+/**
+ * Run a single tick with injected dependencies. Extracted from `tick()`
+ * so tests can supply their own Connection + config without hitting the
+ * env-var config loader or a real RPC.
+ */
+export declare function runTick(conn: Connection, cfg: KeeperConfig): Promise<void>;
+declare function tick(): Promise<void>;
+declare function main(): Promise<void>;
+export { main, tick };
 //# sourceMappingURL=index.d.ts.map

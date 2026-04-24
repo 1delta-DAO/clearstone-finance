@@ -149,17 +149,23 @@ async function deriveCrankAccountsFor(
     new PublicKey("EKpLcVc6rky1ah28NMZFoT2oSXkAKWcEsr6nbZziTWbC")
   );
 
-  const [syMarket] = PublicKey.findProgramAddressSync(
-    [new TextEncoder().encode("sy_market"), baseMintPk.toBuffer()],
-    syProgram
-  );
-  const adapterBaseVault = getAssociatedTokenAddressSync(
-    baseMintPk,
-    syMarket,
-    true,
-    TOKEN_PROGRAM_ID,
-    ASSOCIATED_TOKEN_PROGRAM_ID
-  );
+  // See the comment in roll.ts — prefer snapshot-supplied adapter keys
+  // for non-generic SY adapters.
+  const syMarket = vault.adapter
+    ? new PublicKey(vault.adapter.syMarket)
+    : PublicKey.findProgramAddressSync(
+        [new TextEncoder().encode("sy_market"), baseMintPk.toBuffer()],
+        syProgram
+      )[0];
+  const adapterBaseVault = vault.adapter
+    ? new PublicKey(vault.adapter.adapterBaseVault)
+    : getAssociatedTokenAddressSync(
+        baseMintPk,
+        syMarket,
+        true,
+        TOKEN_PROGRAM_ID,
+        ASSOCIATED_TOKEN_PROGRAM_ID
+      );
 
   const vaultSyAta = getAssociatedTokenAddressSync(
     mintSy, vaultPk, true, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID

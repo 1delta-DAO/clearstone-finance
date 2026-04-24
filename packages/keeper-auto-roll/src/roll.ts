@@ -160,22 +160,29 @@ async function deriveReallocateAccounts(
     new PublicKey("EKpLcVc6rky1ah28NMZFoT2oSXkAKWcEsr6nbZziTWbC")
   );
 
-  // The SY program publishes sy_market as an address in the SY mint's
-  // authority chain. For the generic_exchange_rate_sy adapter, the
-  // sy_market PDA uses seeds [b"sy_market", base_mint]. For Kamino/other
-  // adapters this may differ — v1.1: include sy_market + base_vault in
-  // MarketAccountsDto so this derivation lives in the indexer, not here.
-  const [syMarket] = PublicKey.findProgramAddressSync(
-    [Buffer.from("sy_market"), baseMintPk.toBuffer()],
-    syProgram
-  );
-  const adapterBaseVault = getAssociatedTokenAddressSync(
-    baseMintPk,
-    syMarket,
-    true,
-    TOKEN_PROGRAM_ID,
-    ASSOCIATED_TOKEN_PROGRAM_ID
-  );
+  // Prefer snapshot-supplied adapter keys (set by the backend-edge once
+  // it populates `CuratorVaultSnapshot.adapter`). They're the only
+  // correct path for non-generic adapters (Kamino, etc.) which don't
+  // use the [b"sy_market", base_mint] seed.
+  //
+  // Fallback: derive against generic_exchange_rate_sy's seed. Works
+  // for the dev stack; will produce ConstraintSeeds on Kamino markets.
+  // See FOLLOWUPS.md :: KEEPER_SY_ADAPTER_SEED.
+  const syMarket = vault.adapter
+    ? new PublicKey(vault.adapter.syMarket)
+    : PublicKey.findProgramAddressSync(
+        [Buffer.from("sy_market"), baseMintPk.toBuffer()],
+        syProgram
+      )[0];
+  const adapterBaseVault = vault.adapter
+    ? new PublicKey(vault.adapter.adapterBaseVault)
+    : getAssociatedTokenAddressSync(
+        baseMintPk,
+        syMarket,
+        true,
+        TOKEN_PROGRAM_ID,
+        ASSOCIATED_TOKEN_PROGRAM_ID
+      );
 
   // Vault-PDA-owned ATAs for SY/PT/LP. allowOwnerOffCurve=true
   // because the vault is itself a PDA.
