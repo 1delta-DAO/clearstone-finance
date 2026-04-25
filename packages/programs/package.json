@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "PATH=$HOME/.local/share/solana/install/active_release/bin:$PATH anchor build -p counter && PATH=$HOME/.local/share/solana/install/active_release/bin:$PATH anchor build -p delta_mint && PATH=$HOME/.local/share/solana/install/active_release/bin:$PATH anchor build -p governor",
+    "build": "PATH=$HOME/.local/share/solana/install/active_release/bin:$PATH anchor build -p delta_mint && PATH=$HOME/.local/share/solana/install/active_release/bin:$PATH anchor build -p governor",
     "test": "PATH=$HOME/.local/share/solana/install/active_release/bin:$PATH anchor test",
     "test:fork": "ANCHOR_PROVIDER_URL=https://api.mainnet-beta.solana.com PATH=$HOME/.local/share/solana/install/active_release/bin:$PATH anchor test",
     "test:full-flow": "ANCHOR_PROVIDER_URL=https://api.mainnet-beta.solana.com pnpm ts-mocha -p ./tsconfig.json -t 1000000 tests/kamino-full-flow.fork.ts",

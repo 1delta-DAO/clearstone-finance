@@ -65,7 +65,6 @@ Same model as **Aave Horizon** — compliance at the asset layer, not the protoc
 packages/
 ├── programs/                         # Solana programs (Anchor 0.30.1)
 │   ├── programs/
-│   │   ├── counter/                  # Example program
 │   │   ├── delta-mint/               # KYC-gated token program
 │   │   └── governor/                 # Pool orchestration program
 │   ├── tests/

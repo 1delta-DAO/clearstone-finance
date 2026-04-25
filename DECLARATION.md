@@ -62,7 +62,6 @@ All of the following was written by the team during the hackathon window:
 - **governor** — Pool orchestrator. Single entry-point for pool lifecycle,
   participant management, and market registration via CPI into delta-mint.
 - **mock-oracle** — Test-only oracle for devnet / local flows.
-- **counter** — Scaffold / sanity-check program (not part of product).
 
 ### Tests — [packages/programs/tests/](packages/programs/tests/)
 
