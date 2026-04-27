@@ -28,7 +28,7 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 import BN from "bn.js";
-import { fixedYield } from "@delta/calldata-sdk-solana";
+import { fixedYield, CLEARSTONE_CORE_PROGRAM_ID } from "@delta/calldata-sdk-solana";
 import type { CuratorVaultSnapshot } from "./edge.js";
 import type { KeeperConfig } from "./config.js";
 
@@ -157,7 +157,7 @@ async function deriveReallocateAccounts(
   // Core event authority is a known PDA of the core program.
   const [coreEventAuthority] = PublicKey.findProgramAddressSync(
     [Buffer.from("__event_authority")],
-    new PublicKey("EKpLcVc6rky1ah28NMZFoT2oSXkAKWcEsr6nbZziTWbC")
+    CLEARSTONE_CORE_PROGRAM_ID
   );
 
   // Prefer snapshot-supplied adapter keys (set by the backend-edge once

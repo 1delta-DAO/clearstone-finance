@@ -201,6 +201,7 @@ async function main() {
         decimals: opts.decimals,
         ltvPct: 75,
         liquidationThresholdPct: 85,
+        elevationGroup: 0,
       })
       .accounts({
         authority: auth.publicKey,

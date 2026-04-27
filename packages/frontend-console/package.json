@@ -11,6 +11,7 @@
     "deploy": "pnpm build && npx wrangler pages deploy dist --project-name stablehacks-console"
   },
   "dependencies": {
+    "@clearstone/design-system": "workspace:*",
     "@coral-xyz/anchor": "^0.30.1",
     "@solana/spl-token": "^0.4.14",
     "@solana/wallet-adapter-base": "^0.9.23",

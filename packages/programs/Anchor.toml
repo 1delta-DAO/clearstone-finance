@@ -9,11 +9,13 @@ skip-lint = false
 delta_mint = "BKprvLqNUDCGrpxddppHHQ3UBhof8J5axyexDyctX1xy"
 governor = "6xqW3D1ebp5WjbYh4vwar7ponxrpEaQiVG6uhBYVZtJi"
 mock_oracle = "BbjcMyV2yQaxsgTZAdMFXxFiXSeaUWggoRJMLvZhYFzU"
+accrual_oracle = "8GjxQkJ82LrxpKPYkXw8hpbgCt17hDGk2rcYhqmeR3Ec"
 
 [programs.localnet]
 delta_mint = "BKprvLqNUDCGrpxddppHHQ3UBhof8J5axyexDyctX1xy"
 governor = "6xqW3D1ebp5WjbYh4vwar7ponxrpEaQiVG6uhBYVZtJi"
 mock_oracle = "BbjcMyV2yQaxsgTZAdMFXxFiXSeaUWggoRJMLvZhYFzU"
+accrual_oracle = "8GjxQkJ82LrxpKPYkXw8hpbgCt17hDGk2rcYhqmeR3Ec"
 
 [registry]
 url = "https://api.apr.dev"

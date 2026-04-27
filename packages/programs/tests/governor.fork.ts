@@ -302,6 +302,7 @@ describe("governor-pool-creation (mainnet fork)", () => {
         decimals: 6,
         ltvPct: 75,
         liquidationThresholdPct: 82,
+        elevationGroup: 1,
       })
       .accounts({
         authority: provider.wallet.publicKey,

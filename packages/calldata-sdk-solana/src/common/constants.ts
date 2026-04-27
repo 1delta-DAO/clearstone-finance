@@ -7,11 +7,11 @@ export const GOVERNOR_PROGRAM_ID = new PublicKey("6xqW3D1ebp5WjbYh4vwar7ponxrpEa
 
 // Program IDs — fixed-yield stack (clearstone-fixed-yield fork).
 // These are the declare_id!'s on the fork's mainline branch.
-export const CLEARSTONE_CORE_PROGRAM_ID = new PublicKey("EKpLcVc6rky1ah28NMZFoT2oSXkAKWcEsr6nbZziTWbC");
+export const CLEARSTONE_CORE_PROGRAM_ID = new PublicKey("DZmP7zaBrc6FdJc842aeexnGV5YwPucg2Jv8p6Szh6hW");
 export const CLEARSTONE_ROUTER_PROGRAM_ID = new PublicKey("DenU4j4oV4wCMCsytrfYuFwAumTE1abFAPmpYDpjWmsW");
 export const CLEARSTONE_CURATOR_PROGRAM_ID = new PublicKey("831zw8r2fGwRB1QpuRU3gZHZBFYYHBHeG7RbKUz9ssGm");
 export const KAMINO_SY_ADAPTER_PROGRAM_ID = new PublicKey("29tisXppYM4NcAEJfzMe1aqyuf2M7w9StTtiXBHxTKxd");
-export const GENERIC_EXCHANGE_RATE_SY_PROGRAM_ID = new PublicKey("DZEqpkctMmB1Xq6foy1KnP3VayVFgJfykzi49fpWZ8M6");
+export const GENERIC_EXCHANGE_RATE_SY_PROGRAM_ID = new PublicKey("HA1T2p7DkktepgtwrVqNBK8KidAYr5wvS1uKqzvScNm3");
 
 // External programs
 export const KLEND_PROGRAM_ID = new PublicKey("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD");

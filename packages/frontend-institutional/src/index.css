@@ -1,7 +1,8 @@
 @import "tailwindcss";
-@plugin "daisyui" {
-  themes: business --default, corporate;
-}
+@import "daisyui/daisyui.css" layer(base);
+@import "daisyui/themes.css" layer(base);
+@import "@clearstone/design-system/fonts.css";
+@import "@clearstone/design-system/theme.css";
 
 /* ---- Wallet Adapter Override (DaisyUI 5 variables) ---- */
 .wallet-adapter-modal-wrapper {

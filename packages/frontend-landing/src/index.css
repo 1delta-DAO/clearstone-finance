@@ -1,0 +1,145 @@
+@import "tailwindcss";
+@import "daisyui/daisyui.css" layer(base);
+@import "daisyui/themes.css" layer(base);
+@import "@clearstone/design-system/fonts.css";
+@import "@clearstone/design-system/theme.css";
+
+/* ---- Landing page baseline ----------------------------------- */
+html { scroll-behavior: smooth; }
+
+body {
+  background: #070D1F;
+  color: #E2E7EF;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Section reveal: hidden until intersect, then fade-up smoothly */
+.reveal {
+  opacity: 0;
+  transform: translateY(28px);
+  transition: opacity 900ms cubic-bezier(.2,.7,.2,1), transform 900ms cubic-bezier(.2,.7,.2,1);
+  will-change: opacity, transform;
+}
+.reveal.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+/* Stagger children once the parent reveals */
+.reveal-stagger > * {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity 700ms cubic-bezier(.2,.7,.2,1), transform 700ms cubic-bezier(.2,.7,.2,1);
+}
+.reveal-stagger.is-visible > *:nth-child(1) { transition-delay:   80ms; opacity:1; transform:none; }
+.reveal-stagger.is-visible > *:nth-child(2) { transition-delay:  160ms; opacity:1; transform:none; }
+.reveal-stagger.is-visible > *:nth-child(3) { transition-delay:  240ms; opacity:1; transform:none; }
+.reveal-stagger.is-visible > *:nth-child(4) { transition-delay:  320ms; opacity:1; transform:none; }
+.reveal-stagger.is-visible > *:nth-child(5) { transition-delay:  400ms; opacity:1; transform:none; }
+.reveal-stagger.is-visible > *:nth-child(6) { transition-delay:  480ms; opacity:1; transform:none; }
+
+/* Hero: subtle parallax-ish float */
+@keyframes hero-float {
+  0%,100% { transform: translateY(0) }
+  50%     { transform: translateY(-10px) }
+}
+.hero-float { animation: hero-float 6s ease-in-out infinite; }
+
+/* Soft aura behind the hero mark */
+.hero-aura {
+  background:
+    radial-gradient(60% 50% at 50% 45%, rgba(166,179,197,0.18) 0%, rgba(166,179,197,0) 70%),
+    radial-gradient(80% 60% at 50% 55%, rgba(31,45,72,0.55) 0%, rgba(7,13,31,0) 70%);
+}
+
+/* Section gradients */
+.bg-stone-deep   { background: linear-gradient(180deg, #070D1F 0%, #0E172E 50%, #070D1F 100%); }
+.bg-stone-rise   { background: linear-gradient(180deg, #070D1F 0%, #182441 100%); }
+.bg-stone-light  { background: linear-gradient(180deg, #F4F6FA 0%, #E2E7EF 100%); color: #1F2D48; }
+.bg-stone-fade   { background: linear-gradient(180deg, #182441 0%, #070D1F 100%); }
+
+/* Hairline divider in the dark sections */
+.divider-hair {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(166,179,197,0.35), transparent);
+}
+
+/* Card surfaces tuned for the deep background */
+.card-stone {
+  background: linear-gradient(180deg, rgba(166,179,197,0.06) 0%, rgba(31,45,72,0.18) 100%);
+  border: 1px solid rgba(166,179,197,0.14);
+  border-radius: 18px;
+  backdrop-filter: blur(12px);
+  transition: transform .35s cubic-bezier(.2,.7,.2,1), border-color .35s, box-shadow .35s;
+}
+.card-stone:hover {
+  transform: translateY(-3px);
+  border-color: rgba(197,207,220,0.32);
+  box-shadow: 0 18px 50px -22px rgba(7,13,31,.85);
+}
+
+.card-stone-light {
+  background: #FFFFFF;
+  border: 1px solid #DCE2EC;
+  border-radius: 18px;
+  transition: transform .35s cubic-bezier(.2,.7,.2,1), border-color .35s, box-shadow .35s;
+}
+.card-stone-light:hover {
+  transform: translateY(-3px);
+  border-color: #A6B3C5;
+  box-shadow: 0 18px 50px -22px rgba(31,45,72,.18);
+}
+
+/* CTA buttons */
+.btn-primary-cs {
+  background: linear-gradient(180deg, #4F607C 0%, #1F2D48 100%);
+  color: #E2E7EF;
+  border: 1px solid rgba(197,207,220,0.18);
+  border-radius: 999px;
+  padding: 0.85rem 1.6rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  transition: filter .2s, transform .2s, box-shadow .3s;
+  box-shadow: 0 8px 24px -10px rgba(7,13,31,.7);
+}
+.btn-primary-cs:hover { filter: brightness(1.12); transform: translateY(-1px); }
+.btn-primary-cs:active { transform: translateY(0); }
+
+.btn-ghost-cs {
+  background: transparent;
+  color: #C5CFDC;
+  border: 1px solid rgba(197,207,220,0.28);
+  border-radius: 999px;
+  padding: 0.85rem 1.6rem;
+  font-weight: 500;
+  transition: background .2s, border-color .2s;
+}
+.btn-ghost-cs:hover { background: rgba(166,179,197,0.08); border-color: rgba(197,207,220,0.55); }
+
+/* Animated diagram lines */
+@keyframes flow {
+  0%   { stroke-dashoffset: 64; }
+  100% { stroke-dashoffset: 0;  }
+}
+.flow-line { stroke-dasharray: 4 8; animation: flow 3s linear infinite; }
+
+/* Marquee for partners (slow, subtle) */
+@keyframes marquee {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.marquee { animation: marquee 40s linear infinite; }
+
+/* Number counter */
+.kpi-num {
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .reveal, .reveal-stagger > *, .hero-float, .marquee, .flow-line { transition: none !important; animation: none !important; }
+  .reveal, .reveal-stagger > * { opacity: 1; transform: none; }
+}

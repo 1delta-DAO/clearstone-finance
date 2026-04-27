@@ -57,11 +57,11 @@ export default function Layout() {
       <div className="navbar bg-base-200 border-b border-base-300 px-4 lg:px-8 gap-2">
         <div className="navbar-start">
           <div className="flex items-center gap-3">
-            <img src="/logo.svg" alt="1delta Obelisk" className="w-8 h-8" />
+            <img src="/logo.svg" alt="Clearstone Fusion" className="w-8 h-8" />
             <div>
-              <div className="flex items-baseline gap-1">
-                <span className="text-sm font-light tracking-wide text-base-content/50">1delta</span>
-                <span className="text-base font-bold tracking-tight text-primary">Obelisk</span>
+              <div className="flex items-baseline gap-1 font-display">
+                <span className="brand-wordmark text-base text-primary">clearstone</span>
+                <span className="brand-wordmark-thin text-xs text-base-content/50">fusion</span>
               </div>
               <p className="text-[10px] opacity-40 leading-tight">Admin Console</p>
             </div>
@@ -151,7 +151,7 @@ export default function Layout() {
 
       {/* Footer */}
       <footer className="footer footer-center p-6 text-base-content/20 text-xs border-t border-base-300 mt-8">
-        <p>1delta Obelisk — Solana Devnet</p>
+        <p>Clearstone Fusion — Solana Devnet</p>
       </footer>
     </div>
   );

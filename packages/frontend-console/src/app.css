@@ -1,9 +1,11 @@
 @import "tailwindcss";
 @import "daisyui/daisyui.css" layer(base);
 @import "daisyui/themes.css" layer(base);
+@import "@clearstone/design-system/fonts.css";
+@import "@clearstone/design-system/theme.css";
 
 /* ============================================================
-   Institutional App — Global fixes for DaisyUI 5 sizing
+   Console App — Global fixes for DaisyUI 5 sizing
    ============================================================ */
 
 html, body {
@@ -12,7 +14,6 @@ html, body {
   min-height: 100vh;
   background-color: oklch(var(--color-base-100)) !important;
   color: oklch(var(--color-base-content)) !important;
-  font-family: "Inter", system-ui, -apple-system, sans-serif;
 }
 
 /* ---- DaisyUI 5 size fixes ---- */

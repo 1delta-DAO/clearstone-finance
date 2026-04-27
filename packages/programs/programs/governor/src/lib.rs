@@ -39,6 +39,7 @@ pub mod governor {
         pool.liquidation_threshold_pct = params.liquidation_threshold_pct;
         pool.bump = ctx.bumps.pool_config;
         pool.gatekeeper_network = Pubkey::default();
+        pool.elevation_group = params.elevation_group;
         pool.status = PoolStatus::Initializing;
 
         delta_cpi::initialize_mint(
@@ -258,6 +259,60 @@ pub mod governor {
         let gk_offset = 8 + 32 * 10 + 5; // = 333
         let mut data = account_info.try_borrow_mut_data()?;
         data[gk_offset..gk_offset + 32].copy_from_slice(&gatekeeper_network.to_bytes());
+
+        Ok(())
+    }
+
+    /// Set the klend elevation group for this pool. Only root authority.
+    /// Handles migration from pre-v3 PoolConfig accounts (expands if needed).
+    /// Note: this only updates the off-chain pool record; the actual klend
+    /// reserve config still has to be applied via `update_reserve_config`.
+    pub fn set_elevation_group(
+        ctx: Context<SetElevationGroup>,
+        elevation_group: u8,
+    ) -> Result<()> {
+        let account_info = &ctx.accounts.pool_config;
+        let new_size = 8 + PoolConfig::INIT_SPACE;
+
+        require!(
+            account_info.owner == &crate::ID,
+            GovernorError::Unauthorized
+        );
+
+        // Verify authority (at offset 8, first 32 bytes)
+        let data = account_info.try_borrow_data()?;
+        require!(data.len() >= 40, GovernorError::Unauthorized);
+        let stored_authority = Pubkey::try_from(&data[8..40]).unwrap();
+        require!(
+            stored_authority == ctx.accounts.authority.key(),
+            GovernorError::Unauthorized
+        );
+        drop(data);
+
+        if account_info.data_len() < new_size {
+            let rent = Rent::get()?;
+            let diff = rent.minimum_balance(new_size).saturating_sub(account_info.lamports());
+            if diff > 0 {
+                anchor_lang::solana_program::program::invoke(
+                    &anchor_lang::solana_program::system_instruction::transfer(
+                        ctx.accounts.authority.key,
+                        account_info.key,
+                        diff,
+                    ),
+                    &[
+                        ctx.accounts.authority.to_account_info(),
+                        account_info.to_account_info(),
+                    ],
+                )?;
+            }
+            account_info.realloc(new_size, false)?;
+        }
+
+        // Layout: disc(8) + 10*pubkey(320) + 5 small fields + gatekeeper(32) = 365,
+        // then elevation_group(1).
+        let eg_offset = 8 + 32 * 10 + 5 + 32; // = 365
+        let mut data = account_info.try_borrow_mut_data()?;
+        data[eg_offset] = elevation_group;
 
         Ok(())
     }
@@ -640,6 +695,19 @@ pub struct SetGatekeeperNetwork<'info> {
     pub system_program: Program<'info, System>,
 }
 
+/// Set elevation group — supports pre-v3 account migration.
+#[derive(Accounts)]
+pub struct SetElevationGroup<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    /// CHECK: PoolConfig PDA — manually validated and reallocated if needed.
+    #[account(mut)]
+    pub pool_config: UncheckedAccount<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
 /// Add a new admin — root authority only.
 #[derive(Accounts)]
 pub struct ManageAdmin<'info> {
@@ -1007,6 +1075,9 @@ pub struct PoolConfig {
     /// Civic gatekeeper network for self-registration. Pubkey::default() = disabled.
     /// Added in v2 — must be at end for backwards compatibility with existing accounts.
     pub gatekeeper_network: Pubkey,
+    /// Klend elevation group this pool's reserves belong to. 0 = no group.
+    /// Added in v3 — appended after `gatekeeper_network` for backwards compatibility.
+    pub elevation_group: u8,
 }
 
 #[account]
@@ -1033,6 +1104,8 @@ pub struct PoolParams {
     pub decimals: u8,
     pub ltv_pct: u8,
     pub liquidation_threshold_pct: u8,
+    /// Klend elevation group for the reserve pair. 0 = no group.
+    pub elevation_group: u8,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]

@@ -56,9 +56,11 @@ Pinned. Do not regenerate without cross-repo coordination.
 |---|---|---|
 | delta_mint | `BKprvLqNUDCGrpxddppHHQ3UBhof8J5axyexDyctX1xy` | clearstone-finance |
 | governor | `6xqW3D1ebp5WjbYh4vwar7ponxrpEaQiVG6uhBYVZtJi` | clearstone-finance |
+| accrual_oracle | `8GjxQkJ82LrxpKPYkXw8hpbgCt17hDGk2rcYhqmeR3Ec` | clearstone-finance |
+| mock_oracle | `BbjcMyV2yQaxsgTZAdMFXxFiXSeaUWggoRJMLvZhYFzU` | clearstone-finance |
 | clearstone_fusion | `9ShSnLUcWeg5BZzokj8mdo9cNHARCKa42kwmqSdBNM6J` | clearstone-fusion-protocol |
-| clearstone_core | `EKpLcVc6rky1ah28NMZFoT2oSXkAKWcEsr6nbZziTWbC` | clearstone-fixed-yield |
-| generic_exchange_rate_sy | `DZEqpkctMmB1Xq6foy1KnP3VayVFgJfykzi49fpWZ8M6` | clearstone-fixed-yield |
+| clearstone_core | `DZmP7zaBrc6FdJc842aeexnGV5YwPucg2Jv8p6Szh6hW` | clearstone-fixed-yield |
+| generic_exchange_rate_sy | `HA1T2p7DkktepgtwrVqNBK8KidAYr5wvS1uKqzvScNm3` | clearstone-fixed-yield |
 | kamino_sy_adapter | `29tisXppYM4NcAEJfzMe1aqyuf2M7w9StTtiXBHxTKxd` | clearstone-fixed-yield |
 | clearstone_router | `DenU4j4oV4wCMCsytrfYuFwAumTE1abFAPmpYDpjWmsW` | clearstone-fixed-yield |
 | clearstone_rewards | `7ddrynBQiCNjxejxRwxvSbDb56k8F8Yp4KwYgfiaHX8g` | clearstone-fixed-yield |
@@ -186,7 +188,7 @@ address = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
 anchor build -p clearstone_core
 anchor deploy -p clearstone_core --provider.cluster devnet \
   --program-keypair target/deploy/clearstone_core-keypair.json
-anchor idl init EKpLcVc6rky1ah28NMZFoT2oSXkAKWcEsr6nbZziTWbC \
+anchor idl init DZmP7zaBrc6FdJc842aeexnGV5YwPucg2Jv8p6Szh6hW \
   --filepath target/idl/clearstone_core.json --provider.cluster devnet
 ```
 
@@ -198,7 +200,7 @@ anchor idl init EKpLcVc6rky1ah28NMZFoT2oSXkAKWcEsr6nbZziTWbC \
 anchor build -p generic_exchange_rate_sy
 anchor deploy -p generic_exchange_rate_sy --provider.cluster devnet \
   --program-keypair target/deploy/generic_exchange_rate_sy-keypair.json
-anchor idl init DZEqpkctMmB1Xq6foy1KnP3VayVFgJfykzi49fpWZ8M6 \
+anchor idl init HA1T2p7DkktepgtwrVqNBK8KidAYr5wvS1uKqzvScNm3 \
   --filepath target/idl/generic_exchange_rate_sy.json --provider.cluster devnet
 ```
 
@@ -282,8 +284,8 @@ for ID in \
     BKprvLqNUDCGrpxddppHHQ3UBhof8J5axyexDyctX1xy \
     6xqW3D1ebp5WjbYh4vwar7ponxrpEaQiVG6uhBYVZtJi \
     9ShSnLUcWeg5BZzokj8mdo9cNHARCKa42kwmqSdBNM6J \
-    EKpLcVc6rky1ah28NMZFoT2oSXkAKWcEsr6nbZziTWbC \
-    DZEqpkctMmB1Xq6foy1KnP3VayVFgJfykzi49fpWZ8M6 \
+    DZmP7zaBrc6FdJc842aeexnGV5YwPucg2Jv8p6Szh6hW \
+    HA1T2p7DkktepgtwrVqNBK8KidAYr5wvS1uKqzvScNm3 \
     29tisXppYM4NcAEJfzMe1aqyuf2M7w9StTtiXBHxTKxd \
     DenU4j4oV4wCMCsytrfYuFwAumTE1abFAPmpYDpjWmsW \
     7ddrynBQiCNjxejxRwxvSbDb56k8F8Yp4KwYgfiaHX8g \
@@ -355,6 +357,72 @@ onwards is per-market-per-maturity.
 
 Steps 1–5 are governor-admin-gated. Steps 6–9 are permissionless per-market.
 Steps 10–12 are permissionless per-fill.
+
+---
+
+## csSOL devnet bring-up (LST/SOL elevation group)
+
+Standalone path that brings up a fresh klend market for the csSOL/wSOL pair
+inside elevation group 2 (LST collateralizes SOL borrowing). Independent of
+the dUSDY market — runs beside it without migration.
+
+Prereqs: `delta_mint`, `governor`, `accrual_oracle`, and `mock_oracle` deployed
+on devnet (`anchor build && anchor deploy --provider.cluster devnet`). The
+SOL/USD push feed at `7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE` already
+exists on devnet — no keeper-side bootstrap required for it.
+
+```bash
+cd packages/programs
+
+# 1. Allocate the accrual-oracle output and FeedConfig (one-time per env).
+#    Writes configs/devnet/cssol-oracle.json.
+DEPLOY_KEYPAIR=~/.config/solana/id.json \
+  npx ts-node scripts/setup-cssol-oracle.ts
+
+# 2. Initialize the governor csSOL pool, whitelist the deployer, mint a
+#    0.001 csSOL seed for the klend reserve init. Writes configs/devnet/cssol-pool.json.
+DEPLOY_KEYPAIR=~/.config/solana/id.json \
+  npx ts-node scripts/deploy-cssol-governor-devnet.ts
+
+# 3. Create a fresh lending market, both reserves, register elevation group 2,
+#    register the market with governor. Writes configs/devnet/cssol-deployed.json.
+DEPLOY_KEYPAIR=~/.config/solana/id.json \
+  npx ts-node scripts/setup-cssol-market.ts
+```
+
+Then deploy the keeper Worker so the csSOL accrual output stays fresh:
+
+```bash
+cd packages/keeper-cloud
+pnpm install
+
+# Paste accrualOutput / accrualConfig from cssol-oracle.json into wrangler.toml
+$EDITOR wrangler.toml
+
+# Devnet-only signer with ~0.05 SOL for tx fees
+pnpm secret:keypair    # paste 64-byte JSON array
+
+pnpm deploy
+curl https://<your-worker>.workers.dev/    # one-shot smoke test
+```
+
+State after deploy:
+
+| Component | Location |
+|---|---|
+| csSOL Token-2022 mint | `cssol-pool.json::cssolMint` |
+| Governor PoolConfig (elevation_group=2) | `cssol-pool.json::poolConfig` |
+| Lending market | `cssol-deployed.json::market` |
+| csSOL collateral reserve | `cssol-deployed.json::reserves.csSOL.address` |
+| wSOL borrow reserve | `cssol-deployed.json::reserves.wSOL.address` |
+| Accrual output (csSOL price feed klend reads) | `cssol-oracle.json::accrualOutput` |
+| Pyth SOL/USD source (wSOL price feed klend reads) | `7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE` |
+
+**Mainnet path:** every script accepts `SOLANA_RPC_URL` env. Pyth's SOL/USD
+PDA (`7UVi…`) is the same mainnet PDA — feed_id is network-agnostic. Re-run
+the three scripts against a mainnet RPC, paste the new addresses into
+`packages/keeper-cloud/wrangler.toml`, and redeploy the Worker. No code
+changes required.
 
 ---
 

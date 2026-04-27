@@ -98,6 +98,7 @@ describe("governor — escrow role + co-auth regressions", () => {
         decimals: 6,
         ltvPct: 75,
         liquidationThresholdPct: 82,
+        elevationGroup: 1,
       })
       .accounts({
         authority: provider.wallet.publicKey,

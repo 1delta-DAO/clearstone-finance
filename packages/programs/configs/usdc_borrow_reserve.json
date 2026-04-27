@@ -73,7 +73,7 @@
   "borrowFactorPct": "100",
   "multiplierSideBoost": [1, 1],
   "multiplierTagBoost": [1, 1, 1, 1, 1, 1, 1, 1],
-  "elevationGroups": [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  "elevationGroups": [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
   "autodeleverageEnabled": 1,
   "deleveragingBonusIncreaseBpsPerDay": 100,
   "deleveragingThresholdDecreaseBpsPerDay": "24",

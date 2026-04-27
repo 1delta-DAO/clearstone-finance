@@ -36,10 +36,10 @@ export default function Layout({
       <header className="navbar bg-base-200 border-b border-base-300 px-6 min-h-16">
         <div className="flex-1 gap-3 items-center">
           <div className="flex items-center gap-2">
-            <img src="/logo.svg" alt="1delta Obelisk" className="h-7 w-7" />
-            <div className="flex items-baseline gap-1">
-              <span className="text-sm font-light tracking-wide text-base-content/50">1delta</span>
-              <span className="text-lg font-bold tracking-tight text-primary">Obelisk</span>
+            <img src="/logo.svg" alt="Clearstone Fusion" className="h-7 w-7" />
+            <div className="flex items-baseline gap-1 font-display">
+              <span className="brand-wordmark text-lg text-primary">clearstone</span>
+              <span className="brand-wordmark-thin text-sm text-base-content/50">fusion</span>
             </div>
           </div>
           <span className="text-xs font-semibold text-primary/70">Institutional</span>
@@ -86,7 +86,7 @@ export default function Layout({
 
       {/* Footer */}
       <footer className="border-t border-base-300 bg-base-200 py-4 px-6 text-center text-xs text-base-content/40">
-        1delta Obelisk &middot; Institutional Lending &middot; Powered by Kamino (klend) on Solana &middot; Devnet
+        Clearstone Fusion &middot; Institutional Lending &middot; Powered by Kamino (klend) on Solana &middot; Devnet
       </footer>
     </div>
   );
