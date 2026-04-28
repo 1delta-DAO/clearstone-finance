@@ -142,19 +142,22 @@ function Hero() {
           transition: "transform 0.5s cubic-bezier(.2,.7,.2,1)",
         }}
       >
-        {/* Logo with 3D tilt + glow pulse */}
+        {/* Logo with 3D tilt, halo plate, accent ring, glow pulse */}
         <div
-          className="hero-logo-wrap relative inline-block mb-10"
+          className="hero-logo-wrap relative inline-flex items-center justify-center mb-10"
           style={{
             transform: `perspective(1200px) rotateY(${px.x * 7}deg) rotateX(${-px.y * 5}deg)`,
             transition: "transform 0.4s cubic-bezier(.2,.7,.2,1)",
           }}
         >
-          <div className="hero-glow" aria-hidden />
+          <div className="hero-halo"  aria-hidden />
+          <div className="hero-ring"  aria-hidden />
+          <div className="hero-glow"  aria-hidden />
+          <span className="hero-accent-spark"  aria-hidden />
           <img
             src={logo}
             alt=""
-            className="relative h-44 md:h-56 w-auto drop-shadow-[0_30px_60px_rgba(7,13,31,0.85)] hero-float"
+            className="relative z-10 h-44 md:h-56 w-auto drop-shadow-[0_30px_60px_rgba(7,13,31,0.85)] hero-float"
           />
         </div>
 
