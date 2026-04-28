@@ -53,17 +53,35 @@ interface KlendState {
   obligationExists: boolean;
   obligationAddr: PublicKey;
   userMetaAddr: PublicKey;
+  // Decoded only when obligationExists. Layout offsets derived from
+  // klend-sdk@7.3.20's Obligation borsh schema (see node_modules/.../accounts/Obligation.ts).
+  obligationHasDeposits: boolean;
+  obligationElevationGroup: number;
 }
+
+const OBLIGATION_DEPOSIT0_RESERVE_OFFSET = 96;       // after disc(8)+tag(8)+lastUpdate(16)+market(32)+owner(32)
+const OBLIGATION_ELEVATION_GROUP_OFFSET = 2285;       // after deposits[8](1088)+u64+u128+borrows[5](1000)+4*u128+13 padding
 
 async function readKlendState(conn: ReturnType<typeof useConnection>["connection"], owner: PublicKey): Promise<KlendState> {
   const userMetaAddr = userMetadataPda(owner);
   const obligationAddr = obligationPda(owner);
   const [userMeta, obligation] = await conn.getMultipleAccountsInfo([userMetaAddr, obligationAddr], "confirmed");
+
+  let obligationHasDeposits = false;
+  let obligationElevationGroup = 0;
+  if (obligation && obligation.data.length >= OBLIGATION_ELEVATION_GROUP_OFFSET + 1) {
+    const firstReserveBytes = obligation.data.subarray(OBLIGATION_DEPOSIT0_RESERVE_OFFSET, OBLIGATION_DEPOSIT0_RESERVE_OFFSET + 32);
+    obligationHasDeposits = firstReserveBytes.some((b) => b !== 0);
+    obligationElevationGroup = obligation.data[OBLIGATION_ELEVATION_GROUP_OFFSET];
+  }
+
   return {
     userMetaExists: !!userMeta,
     obligationExists: !!obligation,
     userMetaAddr,
     obligationAddr,
+    obligationHasDeposits,
+    obligationElevationGroup,
   };
 }
 
@@ -132,9 +150,11 @@ export default function OneStepDepositTab() {
       if (!k.obligationExists) {
         tx.add(await buildInitObligationIx(owner, owner));
       }
-      // request_elevation_group(2): obligation must have no deposits at this point.
-      // Safe to always run on a freshly-init'd obligation.
-      tx.add(await buildRequestElevationGroupIx(owner, ELEVATION_GROUP_LST_SOL));
+      // Note: request_elevation_group is NOT in this setup tx. Klend
+      // rejects it on an empty obligation (ObligationDepositsEmpty,
+      // 6020) — the obligation must have at least one deposit before it
+      // can join an elevation group. We append the elevation request to
+      // the deposit tx instead, after the first deposit lands.
 
       await send(tx, "klend setup");
       await refresh();
@@ -171,13 +191,16 @@ export default function OneStepDepositTab() {
         jitoVaultConfig: jitoConfig, vaultStTokenAccount: CSSOL_VAULT_ST_TOKEN_ACCOUNT,
       });
 
+      const k = await readKlendState(connection, owner);
+
       // klend deposit ix expects refresh_obligation at [N-2] and
-      // refresh_reserve at [N-1]. So the order is: wrap → refresh_obligation
-      // → refresh_reserve(csSOL) → deposit. The obligation has csSOL as
-      // its only deposit reserve once any deposit has landed; for the very
-      // first deposit, refresh_obligation runs against an empty obligation
-      // and is a no-op.
-      const refreshObIx = await buildRefreshObligationIx(owner, [CSSOL_RESERVE]);
+      // refresh_reserve at [N-1]. The pre-deposit refresh_obligation
+      // remaining_accounts list must match the deposits already in the
+      // obligation: empty for first deposit, [csSOL] thereafter.
+      const preRefreshObIx = await buildRefreshObligationIx(
+        owner,
+        k.obligationHasDeposits ? [CSSOL_RESERVE] : [],
+      );
       const refreshResIx = await buildRefreshReserveIx(CSSOL_RESERVE, CSSOL_RESERVE_ORACLE);
       const depositIx = await buildDepositCsSolIx(owner, lamports);
 
@@ -198,11 +221,25 @@ export default function OneStepDepositTab() {
         .add(SystemProgram.transfer({ fromPubkey: owner, toPubkey: userWsol, lamports: Number(lamports) }))
         .add(createSyncNativeInstruction(userWsol))
         .add(wrapIx)
-        .add(refreshObIx)
+        .add(preRefreshObIx)
         .add(refreshResIx)
         .add(depositIx);
 
       await send(tx, "wrap+klend deposit");
+
+      // First-time path: bundling refresh_obligation + request_elevation_group
+      // into the deposit tx pushes it past Solana's 1232-byte limit (the wrap
+      // ix alone has 19 accounts, deposit has 14). Send the elevation upgrade
+      // as a separate follow-up tx — by now the deposit has confirmed and the
+      // obligation has the csSOL deposit recorded, so klend accepts the join.
+      if (k.obligationElevationGroup !== ELEVATION_GROUP_LST_SOL) {
+        const elevTx = new Transaction()
+          .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }))
+          .add(await buildRefreshObligationIx(owner, [CSSOL_RESERVE]))
+          .add(await buildRequestElevationGroupIx(owner, ELEVATION_GROUP_LST_SOL));
+        await send(elevTx, "join elevation group 2");
+      }
+
       await refresh();
     } catch (e: any) {
       const onchainLogs = e?.transactionLogs ?? e?.logs ?? null;
@@ -248,6 +285,8 @@ export default function OneStepDepositTab() {
               <>
                 <div>obligation: <code>{short(klend.obligationAddr)}</code> {klend.obligationExists ? "✓" : "(needs init)"}</div>
                 <div>userMetadata: <code>{short(klend.userMetaAddr)}</code> {klend.userMetaExists ? "✓" : "(needs init)"}</div>
+                <div>elevation group: <code>{klend.obligationElevationGroup}</code> {klend.obligationElevationGroup === ELEVATION_GROUP_LST_SOL ? "✓ (csSOL/wSOL eMode)" : "(will join on first deposit)"}</div>
+                <div>has csSOL deposit: <code>{klend.obligationHasDeposits ? "yes" : "no"}</code></div>
                 <div>market: <code>{short(KLEND_MARKET)}</code></div>
                 <div>csSOL reserve: <code>{short(CSSOL_RESERVE)}</code></div>
                 <div>csSOL oracle: <code>{short(CSSOL_RESERVE_ORACLE)}</code></div>
