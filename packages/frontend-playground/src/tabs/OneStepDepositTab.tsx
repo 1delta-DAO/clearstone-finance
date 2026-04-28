@@ -142,7 +142,30 @@ export default function OneStepDepositTab() {
     try {
       const owner = wallet.publicKey;
       const k = klend ?? (await readKlendState(connection, owner));
-      const tx = new Transaction().add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }));
+      const state = await readVaultState(connection, CSSOL_VAULT);
+
+      const userWsol = getAssociatedTokenAddressSync(NATIVE_MINT, owner, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+      const userVrt = getAssociatedTokenAddressSync(state.vrtMint, owner, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+      const userCssol = getAssociatedTokenAddressSync(CSSOL_MINT, owner, false, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+      const feeVrt = getAssociatedTokenAddressSync(state.vrtMint, state.feeWallet, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+
+      const tx = new Transaction()
+        .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }))
+        // ATAs need to exist before the deposit tx — we move them out of
+        // the wrap+deposit tx because that tx is already at the 1232-byte
+        // ceiling. These idempotent creates are cheap if the ATAs exist.
+        .add(createAssociatedTokenAccountIdempotentInstruction(
+          owner, userWsol, owner, NATIVE_MINT, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
+        ))
+        .add(createAssociatedTokenAccountIdempotentInstruction(
+          owner, userVrt, owner, state.vrtMint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
+        ))
+        .add(createAssociatedTokenAccountIdempotentInstruction(
+          owner, userCssol, owner, CSSOL_MINT, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
+        ))
+        .add(createAssociatedTokenAccountIdempotentInstruction(
+          owner, feeVrt, state.feeWallet, state.vrtMint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
+        ));
 
       if (!k.userMetaExists) {
         tx.add(await buildInitUserMetadataIx(owner, owner));
@@ -181,9 +204,6 @@ export default function OneStepDepositTab() {
       );
 
       const userWsol = getAssociatedTokenAddressSync(NATIVE_MINT, owner, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
-      const userVrt = getAssociatedTokenAddressSync(state.vrtMint, owner, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
-      const userCssol = getAssociatedTokenAddressSync(CSSOL_MINT, owner, false, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
-      const feeVrt = getAssociatedTokenAddressSync(state.vrtMint, state.feeWallet, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
 
       const wrapIx = await buildWrapWithJitoVaultIx({
         user: owner, amount: lamports,
@@ -204,20 +224,11 @@ export default function OneStepDepositTab() {
       const refreshResIx = await buildRefreshReserveIx(CSSOL_RESERVE, CSSOL_RESERVE_ORACLE);
       const depositIx = await buildDepositCsSolIx(owner, lamports);
 
+      // ATAs are pre-created by setupKlend(); skipping idempotent ATA
+      // creates here keeps the tx under the 1232-byte limit (wrap +
+      // deposit alone reference 24+ unique accounts).
       const tx = new Transaction()
         .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 }))
-        .add(createAssociatedTokenAccountIdempotentInstruction(
-          owner, userWsol, owner, NATIVE_MINT, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
-        ))
-        .add(createAssociatedTokenAccountIdempotentInstruction(
-          owner, userVrt, owner, state.vrtMint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
-        ))
-        .add(createAssociatedTokenAccountIdempotentInstruction(
-          owner, userCssol, owner, CSSOL_MINT, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
-        ))
-        .add(createAssociatedTokenAccountIdempotentInstruction(
-          owner, feeVrt, state.feeWallet, state.vrtMint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
-        ))
         .add(SystemProgram.transfer({ fromPubkey: owner, toPubkey: userWsol, lamports: Number(lamports) }))
         .add(createSyncNativeInstruction(userWsol))
         .add(wrapIx)
