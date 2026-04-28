@@ -9,14 +9,14 @@ import "@solana/wallet-adapter-react-ui/styles.css";
 
 import { RPC_URL } from "./lib/addresses";
 import JitoRestakingTab from "./tabs/JitoRestakingTab";
+import OneStepDepositTab from "./tabs/OneStepDepositTab";
 
 type Tab = { id: string; label: string; render: () => JSX.Element };
 
 const TABS: Tab[] = [
   { id: "jito-restaking", label: "Jito Restaking", render: () => <JitoRestakingTab /> },
+  { id: "one-step-deposit", label: "1-tx SOL → klend collateral", render: () => <OneStepDepositTab /> },
   // Add more tabs here as flows land:
-  //   { id: "wrap", label: "csSOL Wrap" }
-  //   { id: "klend-deposit", label: "Klend Deposit" }
   //   { id: "bundles", label: "Jito Bundles" }
   //   { id: "shredstream", label: "ShredStream Monitor" }
 ];

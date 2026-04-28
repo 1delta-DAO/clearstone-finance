@@ -1,1 +1,1 @@
-{"root":["./src/App.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/lib/addresses.ts","./src/lib/jitoVault.ts","./src/tabs/JitoRestakingTab.tsx"],"version":"5.9.3"}
+{"root":["./src/App.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/lib/addresses.ts","./src/lib/jitoVault.ts","./src/lib/klend.ts","./src/tabs/JitoRestakingTab.tsx","./src/tabs/OneStepDepositTab.tsx"],"version":"5.9.3"}
