@@ -80,9 +80,29 @@ export default function JitoRestakingTab() {
       ]);
       const signed = await wallet.signTransaction(tx);
       setLog((l) => [...l, "submitted, waiting for confirmation …"]);
-      const sig = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false });
+      // Skip preflight — Phantom already simulated, and its sim can spuriously
+      // fail on multi-ix gate cycles (stale state across ixs). We trust the
+      // committed result fetched below instead.
+      const sig = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true });
       await connection.confirmTransaction(sig, "confirmed");
-      setLog((l) => [...l, `confirmed: ${sig}`]);
+      setLog((l) => [...l, `signature: ${sig}`]);
+
+      // Verify against on-chain state regardless of what the wallet's
+      // toast says. Phantom often shows a red ✕ on these tx because its
+      // preflight assumes the gate is closed when MintTo runs, even though
+      // the rotate ix opens it first within the same tx.
+      const receipt = await connection.getTransaction(sig, {
+        commitment: "confirmed", maxSupportedTransactionVersion: 0,
+      });
+      if (receipt?.meta?.err) {
+        throw new Error("on-chain err: " + JSON.stringify(receipt.meta.err));
+      }
+      setLog((l) => [
+        ...l,
+        receipt
+          ? `✓ on-chain confirmed: err=${receipt.meta?.err ?? "null"}, fee=${receipt.meta?.fee ?? "?"} lamports`
+          : "(receipt not yet visible; refresh balances below)",
+      ]);
       await refresh();
     } catch (e: any) {
       const logs = e?.transactionLogs ?? e?.logs ?? null;
@@ -195,6 +215,24 @@ export default function JitoRestakingTab() {
         </div>
       </div>
 
+      <details className="text-xs opacity-70">
+        <summary className="cursor-pointer">⚠ Phantom may show "Failed" — ignore it; check the on-chain receipt</summary>
+        <p className="mt-2">
+          Phantom's pre-broadcast simulation runs each ix against the pre-tx
+          snapshot. For our admin path the tx is:
+        </p>
+        <pre className="bg-base-300 p-2 rounded mt-2 whitespace-pre-wrap">{`SetSecondaryAdmin(MintBurnAdmin = user)   ← opens gate
+MintTo(amount)                            ← needs gate open
+SetSecondaryAdmin(MintBurnAdmin = governor PDA)  ← restores gate`}</pre>
+        <p className="mt-2">
+          Phantom simulates <code>MintTo</code> assuming the gate is still
+          closed (hasn't applied the prior ix's state mutation), so its
+          confirmation toast often says ✕. The actual on-chain transaction
+          processes the ixs in order and succeeds — verify in the
+          confirmation log above (we fetch the receipt directly with
+          <code> getTransaction</code>) or via the explorer link below.
+        </p>
+      </details>
       <details className="text-xs opacity-70">
         <summary className="cursor-pointer">What this tx actually does</summary>
         <ol className="list-decimal pl-5 mt-2 space-y-1">
