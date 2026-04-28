@@ -22,9 +22,9 @@
   --color-clearstone-fg: #E2E7EF;
 
   /* type stack */
-  --font-display: "Quicksand", ui-sans-serif, system-ui, sans-serif;
-  --font-sans:    "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono:    ui-monospace, "SF Mono", "JetBrains Mono", monospace;
+  --font-display: "Fraunces", ui-serif, "Iowan Old Style", "Times New Roman", serif;
+  --font-sans:    "Geist", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono:    "Geist Mono", ui-monospace, "SF Mono", "JetBrains Mono", monospace;
 
   /* radii / motion */
   --radius-sm: 0.375rem;
@@ -91,10 +91,29 @@ body {
   color: var(--color-base-content);
 }
 
-/* Display / wordmark */
-.font-display { font-family: var(--font-display); letter-spacing: -0.005em; }
-.brand-wordmark      { font-family: var(--font-display); font-weight: 600; letter-spacing: -0.01em; }
-.brand-wordmark-thin { font-family: var(--font-display); font-weight: 300; letter-spacing: 0.22em; text-transform: lowercase; }
+/* Display / wordmark — Fraunces variable serif.
+   - clearstone: medium weight, tight tracking, opsz auto-handles display sizes
+   - fusion:     light italic, generous tracking, lowercase — contrast against the serif body */
+.font-display {
+  font-family: var(--font-display);
+  font-feature-settings: "ss01", "ss02";
+  font-optical-sizing: auto;
+  letter-spacing: -0.012em;
+}
+.brand-wordmark {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-optical-sizing: auto;
+  letter-spacing: -0.018em;
+}
+.brand-wordmark-thin {
+  font-family: var(--font-display);
+  font-weight: 300;
+  font-style: italic;
+  font-optical-sizing: auto;
+  letter-spacing: 0.14em;
+  text-transform: lowercase;
+}
 
 /* Tabular numbers for prices / TVL / rates */
 .num, .tabular { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }

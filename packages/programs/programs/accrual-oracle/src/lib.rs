@@ -56,6 +56,7 @@ pub mod accrual_oracle {
         cfg.pending_rate_bps_per_year = rate_bps_per_year;
         cfg.pending_activation_ts = 0; // 0 = no proposal in flight
         cfg.bump = ctx.bumps.feed_config;
+        cfg.vault = Pubkey::default(); // bind via set_vault later if Vault-mode is desired
 
         // Seed the output account with the discriminator + authority + verification level
         // so the first refresh has a well-formed account to overwrite.
@@ -201,7 +202,166 @@ pub mod accrual_oracle {
 
         Ok(())
     }
+
+    /// Refresh the output feed using a Jito Vault's on-chain exchange rate
+    /// instead of the authority-set time-based rate.
+    ///
+    ///   index_e9 = vault.tokensDeposited / vault.vrtSupply * 1e9
+    ///
+    /// This makes the index a pure function of the Vault's state — no
+    /// authority knob is involved. As NCN operators distribute rewards into
+    /// the Vault (or as it gets slashed), `tokensDeposited` shifts relative
+    /// to `vrtSupply` and the derived index moves accordingly.
+    ///
+    /// Permissionless. Caller passes the Vault account; we validate its
+    /// owner matches the configured `vault_program` and read the offsets
+    /// fixed by the Jito Vault on-chain layout.
+    pub fn refresh_with_vault(ctx: Context<RefreshWithVault>) -> Result<()> {
+        let cfg = &ctx.accounts.feed_config;
+        require!(ctx.accounts.output.key() == cfg.output, OracleError::OutputMismatch);
+        require_keys_eq!(
+            *ctx.accounts.source.owner,
+            cfg.source_program,
+            OracleError::SourceOwnerMismatch
+        );
+        // Optional vault binding — when set, we require the passed vault to
+        // match exactly. When unset we accept any Jito-Vault-owned account.
+        let configured_vault = cfg.vault;
+        if configured_vault != Pubkey::default() {
+            require_keys_eq!(ctx.accounts.vault.key(), configured_vault, OracleError::VaultMismatch);
+        }
+        require_keys_eq!(
+            *ctx.accounts.vault.owner,
+            JITO_VAULT_PROGRAM_ID,
+            OracleError::VaultOwnerMismatch
+        );
+
+        let now = Clock::get()?.unix_timestamp;
+        let slot = Clock::get()?.slot;
+
+        // Vault layout (validated by the SDK type defs we cross-checked):
+        //   8..40   base
+        //   40..72  vrtMint
+        //   72..104 supportedMint
+        //   104..112 vrtSupply (u64 LE)
+        //   112..120 tokensDeposited (u64 LE)
+        let vault_data = ctx.accounts.vault.try_borrow_data()?;
+        require!(vault_data.len() >= 120, OracleError::InvalidVaultSize);
+        let vrt_supply = u64::from_le_bytes(vault_data[104..112].try_into().unwrap());
+        let tokens_deposited = u64::from_le_bytes(vault_data[112..120].try_into().unwrap());
+        drop(vault_data);
+
+        // index_e9 = tokens_deposited * 1e9 / vrt_supply, clamped to 1.0 when
+        // the vault is empty (avoids div-by-zero at bootstrap and gives a
+        // sane passthrough until any deposits land).
+        let index_e9: u64 = if vrt_supply == 0 {
+            1_000_000_000
+        } else {
+            let scaled = (tokens_deposited as u128).saturating_mul(1_000_000_000u128) / (vrt_supply as u128);
+            u64::try_from(scaled).map_err(|_| error!(OracleError::IndexOverflow))?
+        };
+
+        // Read source price (same shape as `refresh`).
+        let src = ctx.accounts.source.try_borrow_data()?;
+        require!(src.len() >= PRICE_UPDATE_V2_LEN, OracleError::InvalidSourceSize);
+        require!(&src[0..8] == PRICE_UPDATE_V2_DISC, OracleError::InvalidSourceDisc);
+        require!(&src[41..73] == cfg.feed_id, OracleError::FeedIdMismatch);
+        let src_price = i64::from_le_bytes(src[73..81].try_into().unwrap());
+        let src_conf = u64::from_le_bytes(src[81..89].try_into().unwrap());
+        let src_expo = i32::from_le_bytes(src[89..93].try_into().unwrap());
+        let src_pub_time = i64::from_le_bytes(src[93..101].try_into().unwrap());
+        drop(src);
+
+        let scaled = (src_price as i128).saturating_mul(index_e9 as i128) / 1_000_000_000i128;
+        let out_price = i64::try_from(scaled).map_err(|_| OracleError::PriceOverflow)?;
+        let scaled_conf = (src_conf as u128).saturating_mul(index_e9 as u128) / 1_000_000_000u128;
+        let out_conf = u64::try_from(scaled_conf).unwrap_or(u64::MAX);
+
+        let mut out = ctx.accounts.output.try_borrow_mut_data()?;
+        require!(out.len() == PRICE_UPDATE_V2_LEN, OracleError::InvalidOutputSize);
+        require!(&out[0..8] == PRICE_UPDATE_V2_DISC, OracleError::InvalidOutputDisc);
+
+        out[73..81].copy_from_slice(&out_price.to_le_bytes());
+        out[81..89].copy_from_slice(&out_conf.to_le_bytes());
+        out[89..93].copy_from_slice(&src_expo.to_le_bytes());
+        let prev_pub_time = i64::from_le_bytes(out[93..101].try_into().unwrap());
+        out[93..101].copy_from_slice(&src_pub_time.max(now).to_le_bytes());
+        out[101..109].copy_from_slice(&prev_pub_time.to_le_bytes());
+        out[109..117].copy_from_slice(&out_price.to_le_bytes());
+        out[117..125].copy_from_slice(&out_conf.to_le_bytes());
+        out[125..133].copy_from_slice(&slot.to_le_bytes());
+
+        emit!(VaultRefreshEvent {
+            feed_config: cfg.key(),
+            output: ctx.accounts.output.key(),
+            vault: ctx.accounts.vault.key(),
+            tokens_deposited,
+            vrt_supply,
+            index_e9,
+            source_price: src_price,
+            output_price: out_price,
+            ts: now,
+        });
+
+        Ok(())
+    }
+
+    /// Bind a Jito Vault address to the FeedConfig, enabling `refresh_with_vault`
+    /// to enforce that ONLY this vault's state can drive the index. Authority only.
+    /// Passing `Pubkey::default()` unbinds (any Jito-Vault-owned account accepted).
+    pub fn set_vault(ctx: Context<AdminOnly>, vault: Pubkey) -> Result<()> {
+        ctx.accounts.feed_config.vault = vault;
+        Ok(())
+    }
+
+    /// One-shot migration of pre-v4 FeedConfig accounts (which lack the
+    /// `vault: Pubkey` field at the end of the struct). Reallocs the
+    /// account up to the new INIT_SPACE and zero-fills the appended bytes
+    /// so the new layout deserializes cleanly. Authority-gated via raw
+    /// byte comparison since `Account<FeedConfig>` would itself fail to
+    /// deserialize on a pre-v4 account.
+    pub fn migrate_to_v4(ctx: Context<MigrateToV4>) -> Result<()> {
+        let account_info = &ctx.accounts.feed_config;
+        let new_size = 8 + FeedConfig::INIT_SPACE;
+
+        require!(account_info.owner == &crate::ID, OracleError::Unauthorized);
+
+        let data = account_info.try_borrow_data()?;
+        require!(data.len() >= 40, OracleError::Unauthorized);
+        let stored_authority = Pubkey::try_from(&data[8..40]).unwrap();
+        require!(
+            stored_authority == ctx.accounts.authority.key(),
+            OracleError::Unauthorized
+        );
+        drop(data);
+
+        if account_info.data_len() < new_size {
+            let rent = Rent::get()?;
+            let diff = rent.minimum_balance(new_size).saturating_sub(account_info.lamports());
+            if diff > 0 {
+                anchor_lang::solana_program::program::invoke(
+                    &anchor_lang::solana_program::system_instruction::transfer(
+                        ctx.accounts.authority.key,
+                        account_info.key,
+                        diff,
+                    ),
+                    &[
+                        ctx.accounts.authority.to_account_info(),
+                        account_info.to_account_info(),
+                    ],
+                )?;
+            }
+            account_info.realloc(new_size, true)?; // zero-init new bytes
+        }
+
+        // The realloc(true) zero-fills the appended region, which is
+        // exactly the layout for `vault: Pubkey = default()`. Done.
+        Ok(())
+    }
 }
+
+/// Jito Vault program ID (same on devnet + mainnet).
+const JITO_VAULT_PROGRAM_ID: Pubkey = anchor_lang::solana_program::pubkey!("Vau1t6sLNxnzB7ZDsef8TLbPLfyZMYXH8WTNqUdm9g8");
 
 // ---------------------------------------------------------------------------
 // Math
@@ -295,6 +455,37 @@ pub struct Refresh<'info> {
     pub output: AccountInfo<'info>,
 }
 
+/// Authority-gated migration. Uses `UncheckedAccount` so the ix can run
+/// against pre-v4 accounts that the strict `Account<FeedConfig>`
+/// deserializer would reject.
+#[derive(Accounts)]
+pub struct MigrateToV4<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    /// CHECK: validated and reallocated inside the ix.
+    #[account(mut)]
+    pub feed_config: UncheckedAccount<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct RefreshWithVault<'info> {
+    #[account(seeds = [b"accrual", feed_config.feed_id.as_ref(), feed_config.output.as_ref()], bump = feed_config.bump)]
+    pub feed_config: Account<'info, FeedConfig>,
+
+    /// CHECK: validated by owner == feed_config.source_program + disc + feed_id.
+    pub source: UncheckedAccount<'info>,
+
+    /// CHECK: must be a Jito Vault account (owner check inside the ix).
+    pub vault: UncheckedAccount<'info>,
+
+    /// CHECK: validated against feed_config.output + program ownership.
+    #[account(mut, owner = crate::ID)]
+    pub output: AccountInfo<'info>,
+}
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -334,6 +525,12 @@ pub struct FeedConfig {
     /// 0 means no proposal is pending.
     pub pending_activation_ts: i64,
     pub bump: u8,
+    /// Optional Jito Vault binding for `refresh_with_vault`. When set,
+    /// the ix requires the passed vault to match exactly. When zeroed,
+    /// any Jito-Vault-program-owned account is accepted (less strict;
+    /// useful for migrations). Added in v4 — must remain last for
+    /// backwards-compatible reallocation of pre-v4 accounts.
+    pub vault: Pubkey,
 }
 
 // ---------------------------------------------------------------------------
@@ -363,6 +560,19 @@ pub struct RateActivatedEvent {
     pub feed_config: Pubkey,
     pub new_rate_bps: i32,
     pub committed_index_e9: u64,
+    pub ts: i64,
+}
+
+#[event]
+pub struct VaultRefreshEvent {
+    pub feed_config: Pubkey,
+    pub output: Pubkey,
+    pub vault: Pubkey,
+    pub tokens_deposited: u64,
+    pub vrt_supply: u64,
+    pub index_e9: u64,
+    pub source_price: i64,
+    pub output_price: i64,
     pub ts: i64,
 }
 
@@ -396,4 +606,12 @@ pub enum OracleError {
     NoPendingRate,
     #[msg("Cooldown has not elapsed yet")]
     CooldownNotElapsed,
+    #[msg("Passed vault does not match feed_config.vault")]
+    VaultMismatch,
+    #[msg("Vault account is not owned by the Jito Vault program")]
+    VaultOwnerMismatch,
+    #[msg("Vault account is too small to be a Jito Vault")]
+    InvalidVaultSize,
+    #[msg("Signer is not the FeedConfig authority")]
+    Unauthorized,
 }

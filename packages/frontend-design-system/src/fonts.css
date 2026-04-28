@@ -1,5 +1,6 @@
 /* Clearstone Fusion typography
-   - Quicksand: brand / display (logo wordmark, headings)
-   - Inter: UI body, tabular numbers for finance figures
+   - Fraunces:    display / wordmark (variable serif, opsz 9..144, ital axis)
+   - Geist:       UI body (modern, distinctive, premium feel)
+   - Geist Mono:  tabular numbers, addresses, hashes
 */
-@import url("https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..700&family=Geist:wght@300..700&family=Geist+Mono:wght@400..600&display=swap");
