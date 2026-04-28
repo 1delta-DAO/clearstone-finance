@@ -21,8 +21,8 @@
   --color-clearstone:    #4F607C;
   --color-clearstone-fg: #E2E7EF;
 
-  /* type stack */
-  --font-display: "Fraunces", ui-serif, "Iowan Old Style", "Times New Roman", serif;
+  /* type stack — single-family Geist throughout */
+  --font-display: "Geist", "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-sans:    "Geist", "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono:    "Geist Mono", ui-monospace, "SF Mono", "JetBrains Mono", monospace;
 
@@ -91,27 +91,22 @@ body {
   color: var(--color-base-content);
 }
 
-/* Display / wordmark — Fraunces variable serif.
-   - clearstone: medium weight, tight tracking, opsz auto-handles display sizes
-   - fusion:     light italic, generous tracking, lowercase — contrast against the serif body */
+/* Display / wordmark — single-family Geist, differentiated by weight + tracking.
+   - clearstone: semibold, tight tracking
+   - fusion:     light, generous tracking, lowercase — quiet companion */
 .font-display {
   font-family: var(--font-display);
-  font-feature-settings: "ss01", "ss02";
-  font-optical-sizing: auto;
-  letter-spacing: -0.012em;
+  letter-spacing: -0.014em;
 }
 .brand-wordmark {
   font-family: var(--font-display);
-  font-weight: 500;
-  font-optical-sizing: auto;
-  letter-spacing: -0.018em;
+  font-weight: 600;
+  letter-spacing: -0.022em;
 }
 .brand-wordmark-thin {
   font-family: var(--font-display);
   font-weight: 300;
-  font-style: italic;
-  font-optical-sizing: auto;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.16em;
   text-transform: lowercase;
 }
 

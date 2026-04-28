@@ -1,6 +1,5 @@
-/* Clearstone Fusion typography
-   - Fraunces:    display / wordmark (variable serif, opsz 9..144, ital axis)
-   - Geist:       UI body (modern, distinctive, premium feel)
-   - Geist Mono:  tabular numbers, addresses, hashes
+/* Clearstone Fusion typography — single-family system
+   - Geist:      everything (display, wordmark, UI body) — variable weight
+   - Geist Mono: tabular numbers, addresses, hashes
 */
-@import url("https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..700&family=Geist:wght@300..700&family=Geist+Mono:wght@400..600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=Geist+Mono:wght@400..600&display=swap");

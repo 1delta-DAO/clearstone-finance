@@ -367,7 +367,7 @@ function Stack() {
           <rect x={80} y={150} width={740} height={60} rx={12}
                 fill="url(#diag-stone)" stroke="rgba(166,179,197,0.32)" />
           <text x={450} y={186} textAnchor="middle"
-                fill="#E2E7EF" fontFamily="Fraunces, serif" fontWeight={500} fontSize={15}>
+                fill="#E2E7EF" fontFamily="Geist, sans-serif" fontWeight={500} fontSize={15}>
             Clearstone Fusion · SDK · Programs · Keeper · Console
           </text>
 
@@ -379,7 +379,7 @@ function Stack() {
           <rect x={250} y={280} width={400} height={60} rx={12}
                 fill="url(#diag-stone)" stroke="rgba(166,179,197,0.32)" />
           <text x={450} y={316} textAnchor="middle"
-                fill="#E2E7EF" fontFamily="Fraunces, serif" fontWeight={500} fontSize={15}>
+                fill="#E2E7EF" fontFamily="Geist, sans-serif" fontWeight={500} fontSize={15}>
             Solana · Kamino (klend) · Permissionless DeFi liquidity
           </text>
         </svg>
