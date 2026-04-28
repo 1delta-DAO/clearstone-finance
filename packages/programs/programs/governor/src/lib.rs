@@ -16,6 +16,18 @@ const JITO_VAULT_PROGRAM_ID: Pubkey =
     anchor_lang::solana_program::pubkey!("Vau1t6sLNxnzB7ZDsef8TLbPLfyZMYXH8WTNqUdm9g8");
 /// MintTo ix discriminator on the Jito Vault program (kinobi u8 enum).
 const JITO_VAULT_MINT_TO_DISC: u8 = 11;
+/// EnqueueWithdrawal ix discriminator on the Jito Vault program.
+const JITO_VAULT_ENQUEUE_WITHDRAWAL_DISC: u8 = 12;
+/// BurnWithdrawalTicket ix discriminator on the Jito Vault program.
+const JITO_VAULT_BURN_WITHDRAWAL_TICKET_DISC: u8 = 14;
+
+/// Maximum number of in-flight Jito withdrawal tickets queued by the pool
+/// at any time. Bounded for account-size sanity. If hit, additional
+/// `enqueue_withdraw_via_pool` calls fail until matured tickets are reaped
+/// via `mature_withdrawal_tickets` (which decrements the live count by
+/// marking entries `redeemed = true` and never reuses slots — fresh entries
+/// always replace the lowest-index redeemed slot).
+pub const MAX_WITHDRAW_QUEUE_TICKETS: usize = 32;
 
 #[program]
 pub mod governor {
@@ -761,6 +773,335 @@ pub mod governor {
 
         Ok(())
     }
+
+    // -----------------------------------------------------------------
+    // csSOL-WT (withdraw ticket) flow — enqueue / mature / redeem
+    // -----------------------------------------------------------------
+
+    /// One-shot init of the per-pool `WithdrawQueue` PDA. Holds a bounded
+    /// list of `{ticket_pda, csSOL_WT_amount, created_at_slot}` records,
+    /// plus a counter of pending wSOL backing already in the pool's
+    /// `pending_wsol_pool` ATA but not yet redeemed.
+    pub fn init_withdraw_queue(ctx: Context<InitWithdrawQueue>) -> Result<()> {
+        let pool_key = ctx.accounts.pool_config.key();
+        let queue = &mut ctx.accounts.withdraw_queue;
+        queue.pool_config = pool_key;
+        queue.pending_wsol = 0;
+        queue.total_cssol_wt_minted = 0;
+        queue.total_cssol_wt_redeemed = 0;
+        queue.tickets = Vec::new();
+        queue.bump = ctx.bumps.withdraw_queue;
+        msg!("WithdrawQueue initialized for pool {}", pool_key);
+        Ok(())
+    }
+
+    /// User-facing entry that converts X csSOL into X csSOL-WT and
+    /// queues X VRT for unstaking via Jito Vault. Permissionless (any
+    /// KYC-whitelisted holder of csSOL can call). Inside one ix:
+    ///
+    ///   1. Token-2022 burn — X csSOL out of user's ATA (user signs as
+    ///      authority; whitelist checked at the program level via the
+    ///      `whitelist_entry` PDA passed in).
+    ///   2. Jito EnqueueWithdrawal CPI — pool PDA (staker) burns X VRT
+    ///      from `POOL_VRT_ATA`, ticket PDA + ticket-VRT-ATA hold the
+    ///      VRT until epoch unlock. Pool PDA also signs as `base` and
+    ///      `burn_signer` (mintBurnAdmin role on the vault).
+    ///   3. delta-mint mint_to CPI — mints X csSOL-WT to user via the
+    ///      pool PDA acting as authority on the *second* delta-mint
+    ///      MintConfig (one per token).
+    ///   4. Append a ticket record to the WithdrawQueue PDA.
+    ///
+    /// Calldata: u64 amount (in csSOL/VRT base units, decimals = 9).
+    pub fn enqueue_withdraw_via_pool(ctx: Context<EnqueueWithdrawViaPool>, amount: u64) -> Result<()> {
+        require!(
+            ctx.accounts.pool_config.status == PoolStatus::Active,
+            GovernorError::PoolNotActive
+        );
+        require!(amount > 0, GovernorError::InvalidPoolStatus);
+
+        // Reject before any CPI if the queue is at cap. Each redeemed
+        // entry is freed eagerly on `mature_withdrawal_tickets`, so a
+        // healthy queue should never hit this.
+        let live_count = ctx
+            .accounts
+            .withdraw_queue
+            .tickets
+            .iter()
+            .filter(|t| !t.redeemed)
+            .count();
+        require!(
+            live_count < MAX_WITHDRAW_QUEUE_TICKETS,
+            GovernorError::WithdrawQueueFull
+        );
+
+        let underlying = ctx.accounts.pool_config.underlying_mint;
+        let bump = ctx.accounts.pool_config.bump;
+        let pool_seeds: &[&[u8]] = &[b"pool".as_ref(), underlying.as_ref(), &[bump]];
+
+        // 1. Burn X csSOL from user — Token-2022 path. csSOL is the
+        //    `wrapped_mint` on the pool config. The user is the
+        //    authority on their own ATA, so this is a direct CPI with
+        //    only the user signing (no PDA seeds).
+        token_interface::burn(
+            CpiContext::new(
+                ctx.accounts.cssol_token_program.to_account_info(),
+                token_interface::Burn {
+                    mint: ctx.accounts.cssol_mint.to_account_info(),
+                    from: ctx.accounts.user_cssol_ata.to_account_info(),
+                    authority: ctx.accounts.user.to_account_info(),
+                },
+            ),
+            amount,
+        )?;
+
+        // 2. Jito EnqueueWithdrawal — pool PDA stands in as
+        //    `staker` + `base` + `burn_signer`. Account ordering matches
+        //    @jito-foundation/vault-sdk getEnqueueWithdrawalInstruction.
+        //    Args: u8 disc | u64 amount.
+        let mut data = Vec::with_capacity(1 + 8);
+        data.push(JITO_VAULT_ENQUEUE_WITHDRAWAL_DISC);
+        data.extend_from_slice(&amount.to_le_bytes());
+
+        let metas = vec![
+            AccountMeta::new_readonly(ctx.accounts.jito_vault_config.key(), false),
+            AccountMeta::new(ctx.accounts.jito_vault.key(), false),
+            AccountMeta::new(ctx.accounts.vault_staker_withdrawal_ticket.key(), false),
+            AccountMeta::new(ctx.accounts.vault_staker_withdrawal_ticket_token_account.key(), false),
+            AccountMeta::new(ctx.accounts.pool_config.key(), true), // staker (signer)
+            AccountMeta::new(ctx.accounts.pool_vrt_token_account.key(), false), // staker_vrt_token_account (W)
+            AccountMeta::new_readonly(ctx.accounts.pool_config.key(), true),    // base (signer)
+            AccountMeta::new_readonly(ctx.accounts.spl_token_program.key(), false),
+            AccountMeta::new_readonly(ctx.accounts.system_program.key(), false),
+            AccountMeta::new_readonly(ctx.accounts.pool_config.key(), true),    // burn_signer (signer)
+        ];
+
+        let ix = Instruction {
+            program_id: JITO_VAULT_PROGRAM_ID,
+            accounts: metas,
+            data,
+        };
+
+        invoke_signed(
+            &ix,
+            &[
+                ctx.accounts.jito_vault_program.to_account_info(),
+                ctx.accounts.jito_vault_config.to_account_info(),
+                ctx.accounts.jito_vault.to_account_info(),
+                ctx.accounts.vault_staker_withdrawal_ticket.to_account_info(),
+                ctx.accounts.vault_staker_withdrawal_ticket_token_account.to_account_info(),
+                ctx.accounts.pool_config.to_account_info(),
+                ctx.accounts.pool_vrt_token_account.to_account_info(),
+                ctx.accounts.spl_token_program.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+            &[pool_seeds],
+        )?;
+
+        // 3. Mint X csSOL-WT to user via delta-mint CPI. The pool PDA
+        //    is the authority on the csSOL-WT mint config (set up by
+        //    a separate one-time `activate_wt_wrapping`-equivalent
+        //    deploy step). Whitelist is enforced inside delta-mint::mint_to.
+        delta_cpi::mint_to(
+            CpiContext::new_with_signer(
+                ctx.accounts.delta_mint_program.to_account_info(),
+                delta_accounts::MintTokens {
+                    authority: ctx.accounts.pool_config.to_account_info(),
+                    mint_config: ctx.accounts.cssol_wt_mint_config.to_account_info(),
+                    mint: ctx.accounts.cssol_wt_mint.to_account_info(),
+                    mint_authority: ctx.accounts.cssol_wt_mint_authority.to_account_info(),
+                    whitelist_entry: ctx.accounts.whitelist_entry.to_account_info(),
+                    destination: ctx.accounts.user_cssol_wt_ata.to_account_info(),
+                    token_program: ctx.accounts.cssol_wt_token_program.to_account_info(),
+                },
+                &[pool_seeds],
+            ),
+            amount,
+        )?;
+
+        // 4. Append a ticket record to the queue. We always push a fresh
+        //    entry; matured/redeemed slots are not reused (they're
+        //    cleaned up on `mature_withdrawal_tickets` by truncating the
+        //    leading run of redeemed entries).
+        let ticket_pda = ctx.accounts.vault_staker_withdrawal_ticket.key();
+        let now_slot = Clock::get()?.slot;
+        let queue = &mut ctx.accounts.withdraw_queue;
+        queue.tickets.push(WithdrawTicket {
+            ticket_pda,
+            cssol_wt_amount: amount,
+            created_at_slot: now_slot,
+            redeemed: false,
+        });
+        queue.total_cssol_wt_minted = queue.total_cssol_wt_minted.saturating_add(amount);
+
+        emit!(EnqueueWithdrawEvent {
+            pool: ctx.accounts.pool_config.key(),
+            user: ctx.accounts.user.key(),
+            ticket: ticket_pda,
+            cssol_burned: amount,
+            cssol_wt_minted: amount,
+            slot: now_slot,
+        });
+
+        Ok(())
+    }
+
+    /// Permissionless: once a Jito withdrawal ticket has cleared its
+    /// epoch-lock window, anyone can call this to:
+    ///   1. CPI BurnWithdrawalTicket on the Jito Vault — pool PDA signs as
+    ///      `staker` + `burn_signer`. Underlying wSOL flows from the Jito
+    ///      vault's `vault_token_account` into the pool's
+    ///      `pending_wsol_pool` ATA.
+    ///   2. Mark the matching queue entry `redeemed = true` and bump
+    ///      `pending_wsol`.
+    ///
+    /// Multiple tickets per call are not supported in v1 — caller fires
+    /// one ix per matured ticket. Cheap enough at devnet/mainnet rates,
+    /// and keeps account-list sizing bounded.
+    pub fn mature_withdrawal_tickets(ctx: Context<MatureWithdrawalTicket>) -> Result<()> {
+        let underlying = ctx.accounts.pool_config.underlying_mint;
+        let bump = ctx.accounts.pool_config.bump;
+        let pool_seeds: &[&[u8]] = &[b"pool".as_ref(), underlying.as_ref(), &[bump]];
+
+        // Verify the ticket is actually one of ours (in the queue) and
+        // not yet redeemed. We do NOT check the unlock window here — the
+        // Jito vault enforces that and will fail the CPI if too early.
+        let ticket_key = ctx.accounts.vault_staker_withdrawal_ticket.key();
+        let queue = &mut ctx.accounts.withdraw_queue;
+        let entry_idx = queue
+            .tickets
+            .iter()
+            .position(|t| t.ticket_pda == ticket_key && !t.redeemed)
+            .ok_or(GovernorError::TicketNotFound)?;
+        let cssol_wt_amount = queue.tickets[entry_idx].cssol_wt_amount;
+
+        // CPI BurnWithdrawalTicket. Args: just the u8 disc.
+        let metas = vec![
+            AccountMeta::new_readonly(ctx.accounts.jito_vault_config.key(), false),
+            AccountMeta::new(ctx.accounts.jito_vault.key(), false),
+            AccountMeta::new(ctx.accounts.vault_st_token_account.key(), false), // vault_token_account
+            AccountMeta::new(ctx.accounts.vrt_mint.key(), false),
+            AccountMeta::new(ctx.accounts.pool_config.key(), false), // staker (NOT signer here per IDL)
+            AccountMeta::new(ctx.accounts.pool_pending_wsol_ata.key(), false), // staker_token_account = receives wSOL
+            AccountMeta::new(ctx.accounts.vault_staker_withdrawal_ticket.key(), false),
+            AccountMeta::new(ctx.accounts.vault_staker_withdrawal_ticket_token_account.key(), false),
+            AccountMeta::new(ctx.accounts.vault_fee_token_account.key(), false),
+            AccountMeta::new(ctx.accounts.program_fee_token_account.key(), false),
+            AccountMeta::new_readonly(ctx.accounts.spl_token_program.key(), false),
+            AccountMeta::new_readonly(ctx.accounts.system_program.key(), false),
+            AccountMeta::new_readonly(ctx.accounts.pool_config.key(), true), // burn_signer (signer)
+        ];
+
+        let ix = Instruction {
+            program_id: JITO_VAULT_PROGRAM_ID,
+            accounts: metas,
+            data: vec![JITO_VAULT_BURN_WITHDRAWAL_TICKET_DISC],
+        };
+
+        invoke_signed(
+            &ix,
+            &[
+                ctx.accounts.jito_vault_program.to_account_info(),
+                ctx.accounts.jito_vault_config.to_account_info(),
+                ctx.accounts.jito_vault.to_account_info(),
+                ctx.accounts.vault_st_token_account.to_account_info(),
+                ctx.accounts.vrt_mint.to_account_info(),
+                ctx.accounts.pool_config.to_account_info(),
+                ctx.accounts.pool_pending_wsol_ata.to_account_info(),
+                ctx.accounts.vault_staker_withdrawal_ticket.to_account_info(),
+                ctx.accounts.vault_staker_withdrawal_ticket_token_account.to_account_info(),
+                ctx.accounts.vault_fee_token_account.to_account_info(),
+                ctx.accounts.program_fee_token_account.to_account_info(),
+                ctx.accounts.spl_token_program.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+            &[pool_seeds],
+        )?;
+
+        // 2. Mark the entry redeemed + bump pending_wsol.
+        queue.tickets[entry_idx].redeemed = true;
+        queue.pending_wsol = queue.pending_wsol.saturating_add(cssol_wt_amount);
+
+        // Compact the head: drop leading runs of redeemed entries to
+        // keep the live-count probe in `enqueue_withdraw_via_pool` cheap.
+        let drop = queue.tickets.iter().take_while(|t| t.redeemed).count();
+        if drop > 0 {
+            queue.tickets.drain(0..drop);
+        }
+
+        emit!(MatureTicketEvent {
+            pool: ctx.accounts.pool_config.key(),
+            ticket: ticket_key,
+            wsol_payout: cssol_wt_amount,
+        });
+
+        Ok(())
+    }
+
+    /// User burns X csSOL-WT and receives X wSOL from the pool's
+    /// `pending_wsol_pool`. Permissionless (any holder of csSOL-WT). The
+    /// burn does not go through delta-mint — Token-2022 burn is a
+    /// permissionless authority-of-holder action — but the user must
+    /// have wSOL ATA receiving capability (whitelist not strictly
+    /// required to receive wSOL, since wSOL is not delta-mint-gated).
+    ///
+    /// Reverts with `RedeemExceedsPending` if the queue's matured
+    /// pool is short. Caller should fire `mature_withdrawal_tickets`
+    /// against any unlocked ticket first.
+    pub fn redeem_cssol_wt(ctx: Context<RedeemCsSolWt>, amount: u64) -> Result<()> {
+        require!(amount > 0, GovernorError::InvalidPoolStatus);
+        require!(
+            ctx.accounts.withdraw_queue.pending_wsol >= amount,
+            GovernorError::RedeemExceedsPending
+        );
+
+        let underlying = ctx.accounts.pool_config.underlying_mint;
+        let bump = ctx.accounts.pool_config.bump;
+        let pool_seeds: &[&[u8]] = &[b"pool".as_ref(), underlying.as_ref(), &[bump]];
+
+        // 1. Burn X csSOL-WT from user (Token-2022, user signs as
+        //    authority on their own ATA).
+        token_interface::burn(
+            CpiContext::new(
+                ctx.accounts.cssol_wt_token_program.to_account_info(),
+                token_interface::Burn {
+                    mint: ctx.accounts.cssol_wt_mint.to_account_info(),
+                    from: ctx.accounts.user_cssol_wt_ata.to_account_info(),
+                    authority: ctx.accounts.user.to_account_info(),
+                },
+            ),
+            amount,
+        )?;
+
+        // 2. Transfer X wSOL from pool's pending_wsol_pool → user's
+        //    wSOL ATA. Pool PDA signs.
+        token_interface::transfer_checked(
+            CpiContext::new_with_signer(
+                ctx.accounts.spl_token_program.to_account_info(),
+                token_interface::TransferChecked {
+                    from: ctx.accounts.pool_pending_wsol_ata.to_account_info(),
+                    mint: ctx.accounts.wsol_mint.to_account_info(),
+                    to: ctx.accounts.user_wsol_ata.to_account_info(),
+                    authority: ctx.accounts.pool_config.to_account_info(),
+                },
+                &[pool_seeds],
+            ),
+            amount,
+            ctx.accounts.pool_config.decimals,
+        )?;
+
+        let queue = &mut ctx.accounts.withdraw_queue;
+        queue.pending_wsol = queue.pending_wsol.saturating_sub(amount);
+        queue.total_cssol_wt_redeemed = queue.total_cssol_wt_redeemed.saturating_add(amount);
+
+        emit!(RedeemCsSolWtEvent {
+            pool: ctx.accounts.pool_config.key(),
+            user: ctx.accounts.user.key(),
+            cssol_wt_burned: amount,
+            wsol_paid: amount,
+        });
+
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1478,4 +1819,294 @@ pub enum GovernorError {
     MarketMismatch,
     #[msg("Invalid borrow rate curve: must be sorted, bounded, start at 0% and end at 100%")]
     InvalidCurve,
+    #[msg("Withdraw queue is at capacity — wait for matured tickets to be reaped before enqueueing more")]
+    WithdrawQueueFull,
+    #[msg("Withdrawal ticket is not in this pool's queue or already redeemed")]
+    TicketNotFound,
+    #[msg("Redeem amount exceeds the queue's currently-matured wSOL pool")]
+    RedeemExceedsPending,
+}
+
+// ---------------------------------------------------------------------------
+// csSOL-WT (withdraw ticket) state + accounts + events
+// ---------------------------------------------------------------------------
+
+#[account]
+pub struct WithdrawQueue {
+    /// Pool this queue belongs to.
+    pub pool_config: Pubkey,
+    /// wSOL currently sitting in `pool_pending_wsol_pool` that has been
+    /// matured from a Jito ticket but not yet redeemed by a csSOL-WT
+    /// burn. Mirrors `pool_pending_wsol_ata`'s real balance modulo
+    /// dust / on-chain rounding.
+    pub pending_wsol: u64,
+    /// Lifetime totals for analytics + reconciliation.
+    pub total_cssol_wt_minted: u64,
+    pub total_cssol_wt_redeemed: u64,
+    /// Bounded list of in-flight tickets. Capacity-checked in
+    /// `enqueue_withdraw_via_pool`. Redeemed entries are eagerly
+    /// drained from the head on `mature_withdrawal_tickets`.
+    pub tickets: Vec<WithdrawTicket>,
+    pub bump: u8,
+}
+
+impl WithdrawQueue {
+    /// 32 (pool_config) + 8 (pending_wsol) + 8 (minted) + 8 (redeemed)
+    ///   + 4 (Vec len prefix) + N * sizeof(WithdrawTicket) + 1 (bump)
+    /// WithdrawTicket = 32 + 8 + 8 + 1 = 49.
+    pub const INIT_SPACE: usize = 32 + 8 + 8 + 8 + 4 + (MAX_WITHDRAW_QUEUE_TICKETS * 49) + 1;
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct WithdrawTicket {
+    /// The Jito Vault `VaultStakerWithdrawalTicket` PDA we own.
+    pub ticket_pda: Pubkey,
+    /// csSOL-WT minted to the requester at enqueue-time. wSOL payout
+    /// after Jito unlock will land 1:1 against this (less any vault
+    /// fees, which Jito takes inside its own ix and we do not
+    /// double-account here).
+    pub cssol_wt_amount: u64,
+    /// Slot at which the ticket was enqueued. Useful for off-chain
+    /// "should this be matured yet?" reasoning; the on-chain unlock
+    /// gate is enforced by Jito Vault itself, not by us.
+    pub created_at_slot: u64,
+    /// True once `mature_withdrawal_tickets` has redeemed this entry
+    /// against Jito (wSOL has flowed into our pending pool).
+    pub redeemed: bool,
+}
+
+#[event]
+pub struct EnqueueWithdrawEvent {
+    pub pool: Pubkey,
+    pub user: Pubkey,
+    pub ticket: Pubkey,
+    pub cssol_burned: u64,
+    pub cssol_wt_minted: u64,
+    pub slot: u64,
+}
+
+#[event]
+pub struct MatureTicketEvent {
+    pub pool: Pubkey,
+    pub ticket: Pubkey,
+    pub wsol_payout: u64,
+}
+
+#[event]
+pub struct RedeemCsSolWtEvent {
+    pub pool: Pubkey,
+    pub user: Pubkey,
+    pub cssol_wt_burned: u64,
+    pub wsol_paid: u64,
+}
+
+// ---------------------------------------------------------------------------
+// Account contexts for the csSOL-WT flow
+// ---------------------------------------------------------------------------
+
+#[derive(Accounts)]
+pub struct InitWithdrawQueue<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        seeds = [b"pool", pool_config.underlying_mint.as_ref()],
+        bump = pool_config.bump,
+        has_one = authority,
+    )]
+    pub pool_config: Account<'info, PoolConfig>,
+
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + WithdrawQueue::INIT_SPACE,
+        seeds = [b"withdraw_queue", pool_config.key().as_ref()],
+        bump,
+    )]
+    pub withdraw_queue: Account<'info, WithdrawQueue>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct EnqueueWithdrawViaPool<'info> {
+    /// The user requesting the unstake. Pays the Jito ticket creation
+    /// rent + the Solana base fee; signs the Token-2022 burn for csSOL.
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"pool", pool_config.underlying_mint.as_ref()],
+        bump = pool_config.bump,
+    )]
+    pub pool_config: Account<'info, PoolConfig>,
+
+    #[account(
+        mut,
+        seeds = [b"withdraw_queue", pool_config.key().as_ref()],
+        bump = withdraw_queue.bump,
+        has_one = pool_config,
+    )]
+    pub withdraw_queue: Account<'info, WithdrawQueue>,
+
+    // ── csSOL (the token being burned) ──
+    /// CHECK: csSOL Token-2022 mint, pinned via pool_config.wrapped_mint.
+    #[account(mut, address = pool_config.wrapped_mint)]
+    pub cssol_mint: UncheckedAccount<'info>,
+
+    /// CHECK: user's csSOL ATA, validated by the Token-2022 burn CPI.
+    #[account(mut)]
+    pub user_cssol_ata: UncheckedAccount<'info>,
+
+    /// SPL Token-2022 program (csSOL is a Token-2022 mint).
+    pub cssol_token_program: Interface<'info, token_interface::TokenInterface>,
+
+    // ── Jito Vault EnqueueWithdrawal accounts ──
+    /// CHECK: Jito Vault Config PDA — validated by Jito CPI.
+    pub jito_vault_config: UncheckedAccount<'info>,
+    /// CHECK: Jito Vault account (the csSOL Jito vault).
+    #[account(mut)]
+    pub jito_vault: UncheckedAccount<'info>,
+    /// CHECK: VaultStakerWithdrawalTicket PDA — created by the Jito CPI.
+    #[account(mut)]
+    pub vault_staker_withdrawal_ticket: UncheckedAccount<'info>,
+    /// CHECK: ticket-owned VRT ATA — created by the Jito CPI.
+    #[account(mut)]
+    pub vault_staker_withdrawal_ticket_token_account: UncheckedAccount<'info>,
+    /// CHECK: pool's VRT ATA — VRT is burned here at enqueue-time.
+    #[account(mut)]
+    pub pool_vrt_token_account: UncheckedAccount<'info>,
+
+    /// CHECK: Jito Vault program ID.
+    #[account(address = JITO_VAULT_PROGRAM_ID)]
+    pub jito_vault_program: UncheckedAccount<'info>,
+
+    /// SPL Token program (regular, not 2022) — VRT is SPL Token.
+    /// CHECK: pinned to canonical Token program by Jito CPI.
+    pub spl_token_program: UncheckedAccount<'info>,
+
+    pub system_program: Program<'info, System>,
+
+    // ── delta-mint csSOL-WT mint accounts ──
+    /// CHECK: csSOL-WT mint config (a *separate* delta-mint MintConfig
+    /// from the csSOL one). Validated by the delta-mint CPI.
+    #[account(mut)]
+    pub cssol_wt_mint_config: UncheckedAccount<'info>,
+    /// CHECK: csSOL-WT mint (Token-2022, KYC-gated via delta-mint).
+    #[account(mut)]
+    pub cssol_wt_mint: UncheckedAccount<'info>,
+    /// CHECK: delta-mint MintAuthority PDA for csSOL-WT.
+    pub cssol_wt_mint_authority: UncheckedAccount<'info>,
+    /// CHECK: user's whitelist entry on the csSOL-WT mint config —
+    /// validated by delta-mint::mint_to.
+    pub whitelist_entry: UncheckedAccount<'info>,
+    /// CHECK: user's csSOL-WT ATA — receives the freshly-minted WT.
+    #[account(mut)]
+    pub user_cssol_wt_ata: UncheckedAccount<'info>,
+
+    pub delta_mint_program: Program<'info, DeltaMintProgram>,
+
+    /// SPL Token-2022 program (csSOL-WT is also Token-2022).
+    pub cssol_wt_token_program: Interface<'info, token_interface::TokenInterface>,
+}
+
+#[derive(Accounts)]
+pub struct MatureWithdrawalTicket<'info> {
+    /// Anyone can crank this — pays only Solana base fee.
+    #[account(mut)]
+    pub cranker: Signer<'info>,
+
+    #[account(
+        seeds = [b"pool", pool_config.underlying_mint.as_ref()],
+        bump = pool_config.bump,
+    )]
+    pub pool_config: Account<'info, PoolConfig>,
+
+    #[account(
+        mut,
+        seeds = [b"withdraw_queue", pool_config.key().as_ref()],
+        bump = withdraw_queue.bump,
+        has_one = pool_config,
+    )]
+    pub withdraw_queue: Account<'info, WithdrawQueue>,
+
+    // ── Jito Vault BurnWithdrawalTicket accounts ──
+    /// CHECK: Jito Vault Config PDA.
+    pub jito_vault_config: UncheckedAccount<'info>,
+    /// CHECK: csSOL Jito Vault account.
+    #[account(mut)]
+    pub jito_vault: UncheckedAccount<'info>,
+    /// CHECK: vault's underlying (wSOL) ATA — wSOL flows out from here.
+    #[account(mut)]
+    pub vault_st_token_account: UncheckedAccount<'info>,
+    /// CHECK: VRT mint.
+    #[account(mut)]
+    pub vrt_mint: UncheckedAccount<'info>,
+    /// CHECK: pool's pending-wSOL ATA — this is where matured wSOL
+    /// accumulates before users redeem against it. Pre-created at
+    /// ATA(NATIVE_MINT, pool_config_pda, off_curve=true).
+    #[account(mut)]
+    pub pool_pending_wsol_ata: UncheckedAccount<'info>,
+    /// CHECK: ticket PDA being burned.
+    #[account(mut)]
+    pub vault_staker_withdrawal_ticket: UncheckedAccount<'info>,
+    /// CHECK: ticket's VRT ATA being closed.
+    #[account(mut)]
+    pub vault_staker_withdrawal_ticket_token_account: UncheckedAccount<'info>,
+    /// CHECK: vault fee ATA.
+    #[account(mut)]
+    pub vault_fee_token_account: UncheckedAccount<'info>,
+    /// CHECK: program fee ATA.
+    #[account(mut)]
+    pub program_fee_token_account: UncheckedAccount<'info>,
+
+    /// CHECK: Jito Vault program.
+    #[account(address = JITO_VAULT_PROGRAM_ID)]
+    pub jito_vault_program: UncheckedAccount<'info>,
+
+    /// CHECK: SPL Token program.
+    pub spl_token_program: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct RedeemCsSolWt<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    #[account(
+        seeds = [b"pool", pool_config.underlying_mint.as_ref()],
+        bump = pool_config.bump,
+    )]
+    pub pool_config: Account<'info, PoolConfig>,
+
+    #[account(
+        mut,
+        seeds = [b"withdraw_queue", pool_config.key().as_ref()],
+        bump = withdraw_queue.bump,
+        has_one = pool_config,
+    )]
+    pub withdraw_queue: Account<'info, WithdrawQueue>,
+
+    // csSOL-WT side (burn) — Token-2022.
+    /// CHECK: csSOL-WT mint.
+    #[account(mut)]
+    pub cssol_wt_mint: UncheckedAccount<'info>,
+    /// CHECK: user's csSOL-WT ATA.
+    #[account(mut)]
+    pub user_cssol_wt_ata: UncheckedAccount<'info>,
+    pub cssol_wt_token_program: Interface<'info, token_interface::TokenInterface>,
+
+    // wSOL side (transfer pool→user).
+    /// CHECK: NATIVE_MINT pubkey, fixed.
+    pub wsol_mint: UncheckedAccount<'info>,
+    /// CHECK: pool's pending-wSOL ATA.
+    #[account(mut)]
+    pub pool_pending_wsol_ata: UncheckedAccount<'info>,
+    /// CHECK: user's wSOL ATA.
+    #[account(mut)]
+    pub user_wsol_ata: UncheckedAccount<'info>,
+    /// CHECK: SPL Token program (wSOL is regular SPL Token).
+    pub spl_token_program: UncheckedAccount<'info>,
 }

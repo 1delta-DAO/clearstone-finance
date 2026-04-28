@@ -117,19 +117,27 @@ export async function buildInitObligationIx(owner: PublicKey, feePayer: PublicKe
   });
 }
 
-export async function buildRequestElevationGroupIx(owner: PublicKey, group = ELEVATION_GROUP_LST_SOL): Promise<TransactionInstruction> {
+export async function buildRequestElevationGroupIx(
+  owner: PublicKey,
+  group = ELEVATION_GROUP_LST_SOL,
+  depositReserves: PublicKey[] = [],
+  borrowReserves: PublicKey[] = [],
+): Promise<TransactionInstruction> {
   const obligation = obligationPda(owner);
   const data = new Uint8Array(8 + 1);
   data.set(await sha256_8("global:request_elevation_group"), 0);
   data[8] = group;
-  // remaining_accounts: each deposit reserve. Empty obligation has no
-  // deposits, so no remaining accounts on first request.
+  // remaining_accounts: each obligation deposit reserve (writable),
+  // then each borrow reserve. Klend SDK addRequestElevationIx
+  // (action.ts:2826) sets role=AccountRole.WRITABLE on each.
   return new TransactionInstruction({
     programId: KLEND_PROGRAM,
     keys: [
       { pubkey: owner, isSigner: true, isWritable: false },
       { pubkey: obligation, isSigner: false, isWritable: true },
       { pubkey: KLEND_MARKET, isSigner: false, isWritable: false },
+      ...depositReserves.map((r) => ({ pubkey: r, isSigner: false, isWritable: true })),
+      ...borrowReserves.map((r) => ({ pubkey: r, isSigner: false, isWritable: true })),
     ],
     data: Buffer.from(data),
   });
@@ -159,7 +167,10 @@ export async function buildRefreshObligationIx(owner: PublicKey, depositReserves
     keys: [
       { pubkey: KLEND_MARKET, isSigner: false, isWritable: false },
       { pubkey: obligation, isSigner: false, isWritable: true },
-      ...depositReserves.map((r) => ({ pubkey: r, isSigner: false, isWritable: false })),
+      // Deposit/borrow reserves passed as remaining_accounts must be
+      // WRITABLE — klend SDK addRefreshObligationIx (action.ts:2764)
+      // sets role=AccountRole.WRITABLE.
+      ...depositReserves.map((r) => ({ pubkey: r, isSigner: false, isWritable: true })),
     ],
     data: Buffer.from(data),
   });

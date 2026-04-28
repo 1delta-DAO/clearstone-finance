@@ -67,3 +67,11 @@ export const WSOL_RESERVE_ORACLE = new PublicKey(
   import.meta.env.VITE_WSOL_RESERVE_ORACLE ?? "7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE",
 );
 export const ELEVATION_GROUP_LST_SOL = 2;
+
+// Address Lookup Table that compresses the static account set used by the
+// merged 1-signature deposit flow (init+ATAs+wrap+klend+elevation). Created
+// once via packages/programs/scripts/init-deposit-lut.ts. Allow `null` so
+// the playground gracefully falls back to the multi-tx flow if the env var
+// isn't set yet.
+const _depositLut = import.meta.env.VITE_DEPOSIT_LUT;
+export const DEPOSIT_LUT: PublicKey | null = _depositLut ? new PublicKey(_depositLut) : null;

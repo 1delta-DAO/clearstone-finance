@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import {
+  AddressLookupTableAccount,
   ComputeBudgetProgram,
   LAMPORTS_PER_SOL,
   PublicKey,
   SystemProgram,
-  Transaction,
+  TransactionInstruction,
+  TransactionMessage,
+  VersionedTransaction,
 } from "@solana/web3.js";
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -23,6 +26,7 @@ import {
   CSSOL_RESERVE_ORACLE,
   CSSOL_VAULT,
   CSSOL_VAULT_ST_TOKEN_ACCOUNT,
+  DEPOSIT_LUT,
   ELEVATION_GROUP_LST_SOL,
   JITO_VAULT_PROGRAM,
   KLEND_MARKET,
@@ -54,13 +58,15 @@ interface KlendState {
   obligationAddr: PublicKey;
   userMetaAddr: PublicKey;
   // Decoded only when obligationExists. Layout offsets derived from
-  // klend-sdk@7.3.20's Obligation borsh schema (see node_modules/.../accounts/Obligation.ts).
+  // klend-sdk@7.3.20's Obligation borsh schema.
   obligationHasDeposits: boolean;
   obligationElevationGroup: number;
+  obligationCsSolCollateral: bigint;
 }
 
-const OBLIGATION_DEPOSIT0_RESERVE_OFFSET = 96;       // after disc(8)+tag(8)+lastUpdate(16)+market(32)+owner(32)
-const OBLIGATION_ELEVATION_GROUP_OFFSET = 2285;       // after deposits[8](1088)+u64+u128+borrows[5](1000)+4*u128+13 padding
+const OBLIGATION_DEPOSIT0_RESERVE_OFFSET = 96;
+const OBLIGATION_DEPOSIT0_AMOUNT_OFFSET = 96 + 32;
+const OBLIGATION_ELEVATION_GROUP_OFFSET = 2285;
 
 async function readKlendState(conn: ReturnType<typeof useConnection>["connection"], owner: PublicKey): Promise<KlendState> {
   const userMetaAddr = userMetadataPda(owner);
@@ -69,10 +75,12 @@ async function readKlendState(conn: ReturnType<typeof useConnection>["connection
 
   let obligationHasDeposits = false;
   let obligationElevationGroup = 0;
+  let obligationCsSolCollateral = 0n;
   if (obligation && obligation.data.length >= OBLIGATION_ELEVATION_GROUP_OFFSET + 1) {
     const firstReserveBytes = obligation.data.subarray(OBLIGATION_DEPOSIT0_RESERVE_OFFSET, OBLIGATION_DEPOSIT0_RESERVE_OFFSET + 32);
     obligationHasDeposits = firstReserveBytes.some((b) => b !== 0);
     obligationElevationGroup = obligation.data[OBLIGATION_ELEVATION_GROUP_OFFSET];
+    obligationCsSolCollateral = obligation.data.readBigUInt64LE(OBLIGATION_DEPOSIT0_AMOUNT_OFFSET);
   }
 
   return {
@@ -82,6 +90,7 @@ async function readKlendState(conn: ReturnType<typeof useConnection>["connection
     obligationAddr,
     obligationHasDeposits,
     obligationElevationGroup,
+    obligationCsSolCollateral,
   };
 }
 
@@ -96,6 +105,7 @@ export default function OneStepDepositTab() {
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [lutAccount, setLutAccount] = useState<AddressLookupTableAccount | null>(null);
 
   const refresh = async () => {
     if (!wallet.publicKey) return;
@@ -116,141 +126,139 @@ export default function OneStepDepositTab() {
     }
   };
 
+  // Cache the LUT account once. The set of static accounts in it doesn't
+  // change, so re-fetching per click would be wasteful.
+  useEffect(() => {
+    if (!DEPOSIT_LUT) return;
+    let cancelled = false;
+    void connection.getAddressLookupTable(DEPOSIT_LUT, { commitment: "confirmed" })
+      .then((r) => { if (!cancelled) setLutAccount(r.value ?? null); })
+      .catch((e) => { if (!cancelled) setError(`failed to load LUT: ${e.message ?? e}`); });
+    return () => { cancelled = true; };
+  }, [connection]);
+
   useEffect(() => { void refresh(); /* eslint-disable-next-line */ }, [wallet.publicKey, connection]);
 
-  async function send(tx: Transaction, label: string) {
+  async function sendV0(ixes: TransactionInstruction[], label: string) {
     if (!wallet.publicKey || !wallet.signTransaction) throw new Error("wallet not connected");
-    tx.feePayer = wallet.publicKey;
-    tx.recentBlockhash = (await connection.getLatestBlockhash("confirmed")).blockhash;
+    if (!DEPOSIT_LUT) throw new Error("VITE_DEPOSIT_LUT not configured. Run packages/programs/scripts/init-deposit-lut.ts first.");
+    if (!lutAccount) throw new Error("LUT not loaded yet — wait a moment and retry");
+
+    const { blockhash } = await connection.getLatestBlockhash("confirmed");
+    const message = new TransactionMessage({
+      payerKey: wallet.publicKey,
+      recentBlockhash: blockhash,
+      instructions: ixes,
+    }).compileToV0Message([lutAccount]);
+
+    const vtx = new VersionedTransaction(message);
+    const serializedSize = vtx.serialize().length;
+    setLog((l) => [...l, `tx assembled: ${ixes.length} ixes, ~${serializedSize} bytes (limit 1232)`]);
+    if (serializedSize > 1232) throw new Error(`tx too large: ${serializedSize} > 1232 bytes`);
+
     setLog((l) => [...l, `signing ${label} …`]);
-    const signed = await wallet.signTransaction(tx);
+    const signed = await wallet.signTransaction(vtx);
     const sig = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true });
     setLog((l) => [...l, `submitted ${label}: ${sig}`]);
     await connection.confirmTransaction(sig, "confirmed");
     const receipt = await connection.getTransaction(sig, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
     if (receipt?.meta?.err) {
-      const logs = receipt.meta.logMessages?.slice(-8).join("\n") ?? "";
+      const logs = receipt.meta.logMessages?.slice(-10).join("\n") ?? "";
       throw new Error(`${label} on-chain err: ${JSON.stringify(receipt.meta.err)}\n${logs}`);
     }
     setLog((l) => [...l, `✓ confirmed ${label}`]);
     return sig;
   }
 
-  async function setupKlend() {
-    if (!wallet.publicKey) return;
-    setBusy(true); setError(null); setLog(["building klend setup tx …"]);
-    try {
-      const owner = wallet.publicKey;
-      const k = klend ?? (await readKlendState(connection, owner));
-      const state = await readVaultState(connection, CSSOL_VAULT);
-
-      const userWsol = getAssociatedTokenAddressSync(NATIVE_MINT, owner, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
-      const userVrt = getAssociatedTokenAddressSync(state.vrtMint, owner, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
-      const userCssol = getAssociatedTokenAddressSync(CSSOL_MINT, owner, false, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
-      const feeVrt = getAssociatedTokenAddressSync(state.vrtMint, state.feeWallet, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
-
-      const tx = new Transaction()
-        .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }))
-        // ATAs need to exist before the deposit tx — we move them out of
-        // the wrap+deposit tx because that tx is already at the 1232-byte
-        // ceiling. These idempotent creates are cheap if the ATAs exist.
-        .add(createAssociatedTokenAccountIdempotentInstruction(
-          owner, userWsol, owner, NATIVE_MINT, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
-        ))
-        .add(createAssociatedTokenAccountIdempotentInstruction(
-          owner, userVrt, owner, state.vrtMint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
-        ))
-        .add(createAssociatedTokenAccountIdempotentInstruction(
-          owner, userCssol, owner, CSSOL_MINT, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
-        ))
-        .add(createAssociatedTokenAccountIdempotentInstruction(
-          owner, feeVrt, state.feeWallet, state.vrtMint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
-        ));
-
-      if (!k.userMetaExists) {
-        tx.add(await buildInitUserMetadataIx(owner, owner));
-      }
-      if (!k.obligationExists) {
-        tx.add(await buildInitObligationIx(owner, owner));
-      }
-      // Note: request_elevation_group is NOT in this setup tx. Klend
-      // rejects it on an empty obligation (ObligationDepositsEmpty,
-      // 6020) — the obligation must have at least one deposit before it
-      // can join an elevation group. We append the elevation request to
-      // the deposit tx instead, after the first deposit lands.
-
-      await send(tx, "klend setup");
-      await refresh();
-    } catch (e: any) {
-      setError(e.message ?? String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function wrapAndDeposit() {
+  async function oneShotDeposit() {
     if (!wallet.publicKey) return;
     setBusy(true); setError(null);
-    setLog([`building 1-tx wrap+deposit for ${amount} SOL …`]);
+    setLog([`assembling 1-signature deposit for ${amount} SOL …`]);
     try {
       const owner = wallet.publicKey;
       const lamports = BigInt(Math.round(Number(amount) * LAMPORTS_PER_SOL));
       if (lamports <= 0n) throw new Error("amount must be > 0");
 
-      const state = await readVaultState(connection, CSSOL_VAULT);
+      const [k, vaultState] = await Promise.all([
+        readKlendState(connection, owner),
+        readVaultState(connection, CSSOL_VAULT),
+      ]);
       const [jitoConfig] = PublicKey.findProgramAddressSync(
         [new TextEncoder().encode("config")],
         JITO_VAULT_PROGRAM,
       );
 
       const userWsol = getAssociatedTokenAddressSync(NATIVE_MINT, owner, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+      const userVrt = getAssociatedTokenAddressSync(vaultState.vrtMint, owner, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+      const userCssol = getAssociatedTokenAddressSync(CSSOL_MINT, owner, false, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+      const feeVrt = getAssociatedTokenAddressSync(vaultState.vrtMint, vaultState.feeWallet, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
 
-      const wrapIx = await buildWrapWithJitoVaultIx({
-        user: owner, amount: lamports,
-        vrtMint: state.vrtMint, feeWallet: state.feeWallet,
-        jitoVaultConfig: jitoConfig, vaultStTokenAccount: CSSOL_VAULT_ST_TOKEN_ACCOUNT,
-      });
+      const ixes: TransactionInstruction[] = [];
 
-      const k = await readKlendState(connection, owner);
+      // Compute budget — wrap + deposit + (optional) elevation tail can hit
+      // ~700k CU on a cold cache. Set high once and forget.
+      ixes.push(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 }));
+      ixes.push(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 10_000 }));
 
-      // klend deposit ix expects refresh_obligation at [N-2] and
-      // refresh_reserve at [N-1]. The pre-deposit refresh_obligation
-      // remaining_accounts list must match the deposits already in the
-      // obligation: empty for first deposit, [csSOL] thereafter.
-      const preRefreshObIx = await buildRefreshObligationIx(
-        owner,
-        k.obligationHasDeposits ? [CSSOL_RESERVE] : [],
-      );
-      const refreshResIx = await buildRefreshReserveIx(CSSOL_RESERVE, CSSOL_RESERVE_ORACLE);
-      const depositIx = await buildDepositCsSolIx(owner, lamports);
+      // ATA idempotents — cheap, always run. The wrap + deposit ixes
+      // need these as keyed accounts anyway, so they don't add unique
+      // accounts to the message; only ~8 bytes of ix-body overhead each.
+      ixes.push(createAssociatedTokenAccountIdempotentInstruction(
+        owner, userWsol, owner, NATIVE_MINT, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
+      ));
+      ixes.push(createAssociatedTokenAccountIdempotentInstruction(
+        owner, userVrt, owner, vaultState.vrtMint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
+      ));
+      ixes.push(createAssociatedTokenAccountIdempotentInstruction(
+        owner, userCssol, owner, CSSOL_MINT, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
+      ));
+      ixes.push(createAssociatedTokenAccountIdempotentInstruction(
+        owner, feeVrt, vaultState.feeWallet, vaultState.vrtMint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
+      ));
 
-      // ATAs are pre-created by setupKlend(); skipping idempotent ATA
-      // creates here keeps the tx under the 1232-byte limit (wrap +
-      // deposit alone reference 24+ unique accounts).
-      const tx = new Transaction()
-        .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 }))
-        .add(SystemProgram.transfer({ fromPubkey: owner, toPubkey: userWsol, lamports: Number(lamports) }))
-        .add(createSyncNativeInstruction(userWsol))
-        .add(wrapIx)
-        .add(preRefreshObIx)
-        .add(refreshResIx)
-        .add(depositIx);
-
-      await send(tx, "wrap+klend deposit");
-
-      // First-time path: bundling refresh_obligation + request_elevation_group
-      // into the deposit tx pushes it past Solana's 1232-byte limit (the wrap
-      // ix alone has 19 accounts, deposit has 14). Send the elevation upgrade
-      // as a separate follow-up tx — by now the deposit has confirmed and the
-      // obligation has the csSOL deposit recorded, so klend accepts the join.
-      if (k.obligationElevationGroup !== ELEVATION_GROUP_LST_SOL) {
-        const elevTx = new Transaction()
-          .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }))
-          .add(await buildRefreshObligationIx(owner, [CSSOL_RESERVE]))
-          .add(await buildRequestElevationGroupIx(owner, ELEVATION_GROUP_LST_SOL));
-        await send(elevTx, "join elevation group 2");
+      // Klend account init — only when missing. Both ixes have
+      // anchor `init` constraints that fail if accounts already exist.
+      if (!k.userMetaExists) {
+        ixes.push(await buildInitUserMetadataIx(owner, owner));
+      }
+      if (!k.obligationExists) {
+        ixes.push(await buildInitObligationIx(owner, owner));
       }
 
+      // Wrap leg: SOL → wSOL → governor::wrap_with_jito_vault.
+      ixes.push(SystemProgram.transfer({ fromPubkey: owner, toPubkey: userWsol, lamports: Number(lamports) }));
+      ixes.push(createSyncNativeInstruction(userWsol));
+      ixes.push(await buildWrapWithJitoVaultIx({
+        user: owner, amount: lamports,
+        vrtMint: vaultState.vrtMint, feeWallet: vaultState.feeWallet,
+        jitoVaultConfig: jitoConfig, vaultStTokenAccount: CSSOL_VAULT_ST_TOKEN_ACCOUNT,
+      }));
+
+      // Klend deposit. check_refresh requires the ix at N-2 to be
+      // refresh_reserve and the ix at N-1 to be refresh_obligation. The
+      // remaining_accounts of refresh_obligation here mirror the deposit
+      // slots that already exist on the obligation: empty for the first
+      // deposit, [csSOL] thereafter.
+      ixes.push(await buildRefreshReserveIx(CSSOL_RESERVE, CSSOL_RESERVE_ORACLE));
+      ixes.push(await buildRefreshObligationIx(
+        owner,
+        // After init_obligation in this same tx, hasDeposits is always
+        // false at this point. After a prior deposit, it's true.
+        k.obligationHasDeposits ? [CSSOL_RESERVE] : [],
+      ));
+      ixes.push(await buildDepositCsSolIx(owner, lamports));
+
+      // Elevation join — only when not yet in group 2 AND we know the
+      // deposit just made the obligation non-empty (so the
+      // ObligationDepositsEmpty=6020 guard passes). The post-deposit
+      // refresh_obligation must include csSOL as a writable remaining
+      // account.
+      if (k.obligationElevationGroup !== ELEVATION_GROUP_LST_SOL) {
+        ixes.push(await buildRefreshObligationIx(owner, [CSSOL_RESERVE]));
+        ixes.push(await buildRequestElevationGroupIx(owner, ELEVATION_GROUP_LST_SOL, [CSSOL_RESERVE]));
+      }
+
+      await sendV0(ixes, "1-sig deposit");
       await refresh();
     } catch (e: any) {
       const onchainLogs = e?.transactionLogs ?? e?.logs ?? null;
@@ -265,26 +273,29 @@ export default function OneStepDepositTab() {
       <section className="max-w-3xl">
         <h2 className="text-2xl font-bold mb-2">1-tx Deposit — SOL → csSOL → klend collateral</h2>
         <p className="opacity-70 mb-6">
-          Atomic institutional deposit. One signature wraps native SOL into Jito-backed csSOL,
-          then deposits the csSOL as klend collateral inside elevation group 2 (csSOL/wSOL eMode,
-          90% LTV). Whitelist-only at the delta-mint layer.
+          One signature wraps native SOL into Jito-backed csSOL and deposits it as klend
+          collateral inside elevation group 2 (csSOL/wSOL eMode, 90% LTV) — including
+          first-time klend obligation init + ATA creation if needed. Whitelist-only at
+          the delta-mint layer.
         </p>
         <div className="alert alert-warning"><span>Connect a wallet to start.</span></div>
       </section>
     );
   }
 
-  const setupNeeded = !!klend && (!klend.userMetaExists || !klend.obligationExists);
-  const canDeposit = !setupNeeded && !!whitelisted;
+  const lutMissing = !DEPOSIT_LUT;
+  const lutLoading = !!DEPOSIT_LUT && !lutAccount;
+  const canDeposit = !!whitelisted && !lutMissing && !lutLoading;
 
   return (
     <section className="max-w-3xl space-y-6">
       <header>
-        <h2 className="text-2xl font-bold">1-tx Deposit — SOL → csSOL → klend collateral</h2>
+        <h2 className="text-2xl font-bold">1-signature Deposit — SOL → csSOL → klend collateral</h2>
         <p className="opacity-70 mt-1 text-sm">
-          One user signature: wraps native SOL into csSOL via the Jito vault and immediately
-          deposits the resulting csSOL as klend collateral inside elevation group&nbsp;
-          {ELEVATION_GROUP_LST_SOL} (90% LTV csSOL → wSOL borrow).
+          One user signature: ATA create + (optional) klend obligation init + wrap SOL → csSOL
+          via the Jito vault + deposit csSOL as klend collateral + (optional) join elevation
+          group {ELEVATION_GROUP_LST_SOL} (90% LTV csSOL → wSOL borrow). Compressed via the
+          deposit Address Lookup Table.
         </p>
       </header>
 
@@ -294,13 +305,23 @@ export default function OneStepDepositTab() {
             <div className="font-bold">Klend account</div>
             {klend ? (
               <>
-                <div>obligation: <code>{short(klend.obligationAddr)}</code> {klend.obligationExists ? "✓" : "(needs init)"}</div>
-                <div>userMetadata: <code>{short(klend.userMetaAddr)}</code> {klend.userMetaExists ? "✓" : "(needs init)"}</div>
-                <div>elevation group: <code>{klend.obligationElevationGroup}</code> {klend.obligationElevationGroup === ELEVATION_GROUP_LST_SOL ? "✓ (csSOL/wSOL eMode)" : "(will join on first deposit)"}</div>
-                <div>has csSOL deposit: <code>{klend.obligationHasDeposits ? "yes" : "no"}</code></div>
+                <div>obligation: <code>{short(klend.obligationAddr)}</code> {klend.obligationExists ? "✓" : "(will be init'd in tx)"}</div>
+                <div>userMetadata: <code>{short(klend.userMetaAddr)}</code> {klend.userMetaExists ? "✓" : "(will be init'd in tx)"}</div>
+                <div>
+                  elevation group: <code>{klend.obligationElevationGroup}</code>{" "}
+                  {klend.obligationElevationGroup === ELEVATION_GROUP_LST_SOL ? (
+                    <span className="text-success">✓ csSOL/wSOL eMode active (90% LTV)</span>
+                  ) : klend.obligationElevationGroup === 0 ? (
+                    <span className="text-warning">default group (55% LTV) — will join in next deposit tx</span>
+                  ) : (
+                    <span className="opacity-60">group {klend.obligationElevationGroup}</span>
+                  )}
+                </div>
+                <div>csSOL collateral: <code>{(Number(klend.obligationCsSolCollateral) / LAMPORTS_PER_SOL).toFixed(6)}</code> <span className="opacity-60">({klend.obligationCsSolCollateral.toString()} cToken)</span></div>
                 <div>market: <code>{short(KLEND_MARKET)}</code></div>
                 <div>csSOL reserve: <code>{short(CSSOL_RESERVE)}</code></div>
                 <div>csSOL oracle: <code>{short(CSSOL_RESERVE_ORACLE)}</code></div>
+                <div>deposit LUT: {DEPOSIT_LUT ? <code>{short(DEPOSIT_LUT)}</code> : <span className="text-error">not set (set VITE_DEPOSIT_LUT)</span>} {DEPOSIT_LUT && lutAccount ? <span className="opacity-60">— {lutAccount.state.addresses.length} entries</span> : null}</div>
               </>
             ) : <div className="opacity-60">loading …</div>}
           </div>
@@ -311,35 +332,15 @@ export default function OneStepDepositTab() {
             <div className="font-bold">Wallet</div>
             <div>pubkey: <code>{short(wallet.publicKey)}</code></div>
             <div>SOL: <code>{(Number(solBal) / LAMPORTS_PER_SOL).toFixed(6)}</code></div>
-            <div>csSOL (free): <code>{cssolBal.toString()}</code></div>
+            <div>csSOL (free): <code>{(Number(cssolBal) / LAMPORTS_PER_SOL).toFixed(6)}</code> <span className="opacity-60">({cssolBal.toString()} raw)</span></div>
             <div className={`text-xs mt-2 ${whitelisted ? "text-success" : "text-warning"}`}>
               {whitelisted === null ? "checking whitelist…"
                 : whitelisted ? "✓ KYC-whitelisted on delta-mint."
-                : "⚠ NOT whitelisted. The wrap will fail at delta-mint::mint_to. Run governor.add_participant(Holder, your_pubkey) from an admin wallet."}
+                : "⚠ NOT whitelisted. The wrap will fail at delta-mint::mint_to."}
             </div>
           </div>
         </div>
       </div>
-
-      {setupNeeded ? (
-        <div className="card bg-base-200">
-          <div className="card-body p-4 space-y-3">
-            <div className="font-bold">First-time setup</div>
-            <p className="text-sm opacity-70">
-              Your klend obligation hasn't been created yet. One setup tx initializes
-              <code className="mx-1">user_metadata</code>, <code className="mx-1">obligation</code> (default tag/id),
-              and joins elevation group <code>{ELEVATION_GROUP_LST_SOL}</code>.
-            </p>
-            <div className="flex items-center gap-2">
-              <button className="btn btn-primary" onClick={setupKlend} disabled={busy}>
-                {busy ? <span className="loading loading-spinner loading-sm" /> : null}
-                Initialize klend account
-              </button>
-              <button className="btn btn-ghost btn-sm" onClick={() => void refresh()} disabled={busy}>Refresh</button>
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       <div className="card bg-base-200">
         <div className="card-body p-4 space-y-3">
@@ -348,10 +349,11 @@ export default function OneStepDepositTab() {
             <input type="number" step="0.001" min="0" className="input input-bordered w-48"
               value={amount} onChange={(e) => setAmount(e.target.value)} disabled={busy} />
             <span className="text-sm opacity-70">SOL</span>
-            <button className="btn btn-primary" onClick={wrapAndDeposit}
+            <button className="btn btn-primary" onClick={oneShotDeposit}
               disabled={busy || !canDeposit}
               title={
-                setupNeeded ? "Initialize klend account first"
+                lutMissing ? "VITE_DEPOSIT_LUT not configured"
+                  : lutLoading ? "Waiting for LUT to load…"
                   : !whitelisted ? "Wallet is not KYC-whitelisted"
                   : undefined
               }>
@@ -360,6 +362,12 @@ export default function OneStepDepositTab() {
             </button>
             <button className="btn btn-ghost btn-sm" onClick={() => void refresh()} disabled={busy}>Refresh</button>
           </div>
+          {lutMissing ? (
+            <div className="alert alert-warning text-xs">
+              VITE_DEPOSIT_LUT is not set. Run <code>packages/programs/scripts/init-deposit-lut.ts</code>,
+              then add the printed address to your <code>.env.local</code> as <code>VITE_DEPOSIT_LUT</code>.
+            </div>
+          ) : null}
           {error ? <pre className="alert alert-error text-xs whitespace-pre-wrap">{error}</pre> : null}
           {log.length > 0 ? <pre className="bg-base-300 p-2 text-xs whitespace-pre-wrap rounded">{log.join("\n")}</pre> : null}
         </div>
@@ -369,15 +377,22 @@ export default function OneStepDepositTab() {
         <summary className="cursor-pointer">What this tx actually does</summary>
         <ol className="list-decimal pl-5 mt-2 space-y-1">
           <li>Idempotently creates user's wSOL, VRT, csSOL, and fee-VRT ATAs.</li>
-          <li>Transfers <code>amount</code> lamports of SOL into user's wSOL ATA + <code>sync_native</code>.</li>
+          <li><em>(first time only)</em> klend <code>init_user_metadata</code> + <code>init_obligation</code>.</li>
+          <li>Transfers <code>amount</code> lamports of SOL into the user's wSOL ATA + <code>sync_native</code>.</li>
           <li><code>governor::wrap_with_jito_vault(amount)</code> — Jito MintTo via PDA-signed CPI,
             VRT swept to pool, csSOL minted to user (KYC-checked).</li>
-          <li>klend <code>refresh_obligation</code> (slot N-2 of the deposit ix).</li>
           <li>klend <code>refresh_reserve(csSOL_RESERVE)</code> reading the accrual-oracle output.</li>
+          <li>klend <code>refresh_obligation</code>.</li>
           <li>klend <code>deposit_reserve_liquidity_and_obligation_collateral(amount)</code> —
-            csSOL leaves user's ATA into the reserve, cTokens recorded as obligation collateral
-            inside elevation group <code>{ELEVATION_GROUP_LST_SOL}</code>.</li>
+            csSOL leaves user's ATA into the reserve, cTokens recorded as obligation collateral.</li>
+          <li><em>(first time only)</em> klend <code>refresh_obligation([csSOL])</code>
+            + <code>request_elevation_group({ELEVATION_GROUP_LST_SOL})</code> — joins csSOL/wSOL eMode (90% LTV).</li>
         </ol>
+        <p className="mt-2 opacity-70">
+          All ~37 unique pubkeys are compressed via the deposit Address Lookup Table —
+          static program / market / reserve / vault / mint addresses are 1-byte indices,
+          leaving room under the 1232-byte tx limit even for the first-time bundled path.
+        </p>
       </details>
     </section>
   );

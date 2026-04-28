@@ -167,6 +167,14 @@ pub mod accrual_oracle {
         let src_conf = u64::from_le_bytes(src[81..89].try_into().unwrap());
         let src_expo = i32::from_le_bytes(src[89..93].try_into().unwrap());
         let src_pub_time = i64::from_le_bytes(src[93..101].try_into().unwrap());
+        // Source EMA at offsets 109..117 (price) / 117..125 (conf). Reading
+        // these and scaling them independently preserves the price/EMA
+        // distinction klend's RequestElevationGroup checks against —
+        // duplicating out_price into the EMA slot leaves PriceStatusFlags
+        // bit 1 (PYTH_EMA) cleared and the elevation-join ix rejects the
+        // obligation as stale even after a same-slot RefreshObligation.
+        let src_ema_price = i64::from_le_bytes(src[109..117].try_into().unwrap());
+        let src_ema_conf = u64::from_le_bytes(src[117..125].try_into().unwrap());
         drop(src);
 
         // out_price = src_price * index_e9 / 1e9. Use i128 to avoid overflow.
@@ -176,6 +184,13 @@ pub mod accrual_oracle {
         // index too — preserves the relative confidence band the source feed reports.
         let scaled_conf = (src_conf as u128).saturating_mul(index_e9 as u128) / 1_000_000_000u128;
         let out_conf = u64::try_from(scaled_conf).unwrap_or(u64::MAX);
+
+        // Same scaling for the EMA price/conf so klend's PYTH_EMA check
+        // sees a non-degenerate (price ≠ ema) update.
+        let scaled_ema = (src_ema_price as i128).saturating_mul(index_e9 as i128) / 1_000_000_000i128;
+        let out_ema_price = i64::try_from(scaled_ema).map_err(|_| OracleError::PriceOverflow)?;
+        let scaled_ema_conf = (src_ema_conf as u128).saturating_mul(index_e9 as u128) / 1_000_000_000u128;
+        let out_ema_conf = u64::try_from(scaled_ema_conf).unwrap_or(u64::MAX);
 
         let mut out = ctx.accounts.output.try_borrow_mut_data()?;
         require!(out.len() == PRICE_UPDATE_V2_LEN, OracleError::InvalidOutputSize);
@@ -187,8 +202,8 @@ pub mod accrual_oracle {
         let prev_pub_time = i64::from_le_bytes(out[93..101].try_into().unwrap());
         out[93..101].copy_from_slice(&src_pub_time.max(now).to_le_bytes());
         out[101..109].copy_from_slice(&prev_pub_time.to_le_bytes());
-        out[109..117].copy_from_slice(&out_price.to_le_bytes());
-        out[117..125].copy_from_slice(&out_conf.to_le_bytes());
+        out[109..117].copy_from_slice(&out_ema_price.to_le_bytes());
+        out[117..125].copy_from_slice(&out_ema_conf.to_le_bytes());
         out[125..133].copy_from_slice(&slot.to_le_bytes());
 
         emit!(RefreshEvent {
@@ -270,12 +285,21 @@ pub mod accrual_oracle {
         let src_conf = u64::from_le_bytes(src[81..89].try_into().unwrap());
         let src_expo = i32::from_le_bytes(src[89..93].try_into().unwrap());
         let src_pub_time = i64::from_le_bytes(src[93..101].try_into().unwrap());
+        let src_ema_price = i64::from_le_bytes(src[109..117].try_into().unwrap());
+        let src_ema_conf = u64::from_le_bytes(src[117..125].try_into().unwrap());
         drop(src);
 
         let scaled = (src_price as i128).saturating_mul(index_e9 as i128) / 1_000_000_000i128;
         let out_price = i64::try_from(scaled).map_err(|_| OracleError::PriceOverflow)?;
         let scaled_conf = (src_conf as u128).saturating_mul(index_e9 as u128) / 1_000_000_000u128;
         let out_conf = u64::try_from(scaled_conf).unwrap_or(u64::MAX);
+
+        // Independent EMA scaling — see `refresh` for why this matters
+        // (klend's RequestElevationGroup PYTH_EMA flag check).
+        let scaled_ema = (src_ema_price as i128).saturating_mul(index_e9 as i128) / 1_000_000_000i128;
+        let out_ema_price = i64::try_from(scaled_ema).map_err(|_| OracleError::PriceOverflow)?;
+        let scaled_ema_conf = (src_ema_conf as u128).saturating_mul(index_e9 as u128) / 1_000_000_000u128;
+        let out_ema_conf = u64::try_from(scaled_ema_conf).unwrap_or(u64::MAX);
 
         let mut out = ctx.accounts.output.try_borrow_mut_data()?;
         require!(out.len() == PRICE_UPDATE_V2_LEN, OracleError::InvalidOutputSize);
@@ -287,8 +311,8 @@ pub mod accrual_oracle {
         let prev_pub_time = i64::from_le_bytes(out[93..101].try_into().unwrap());
         out[93..101].copy_from_slice(&src_pub_time.max(now).to_le_bytes());
         out[101..109].copy_from_slice(&prev_pub_time.to_le_bytes());
-        out[109..117].copy_from_slice(&out_price.to_le_bytes());
-        out[117..125].copy_from_slice(&out_conf.to_le_bytes());
+        out[109..117].copy_from_slice(&out_ema_price.to_le_bytes());
+        out[117..125].copy_from_slice(&out_ema_conf.to_le_bytes());
         out[125..133].copy_from_slice(&slot.to_le_bytes());
 
         emit!(VaultRefreshEvent {
