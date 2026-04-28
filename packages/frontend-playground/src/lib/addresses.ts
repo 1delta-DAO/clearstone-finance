@@ -20,3 +20,13 @@ export const CSSOL_VAULT_ST_TOKEN_ACCOUNT = new PublicKey(
 
 // Jito Vault SDK constants (verified at runtime against the program).
 export const MINT_TO_DISCRIMINATOR = 11;
+export const SET_SECONDARY_ADMIN_DISCRIMINATOR = 22;
+export const ROLE_MINT_BURN_ADMIN = 6; // VaultAdminRole::MintBurnAdmin
+
+// The pubkey we restore mintBurnAdmin to after a privileged-rotation
+// playground tx. Defaults to the governor pool PDA so production gating
+// stays in place. Override via VITE_DEFAULT_MINT_BURN_ADMIN if testing
+// against another deploy.
+export const DEFAULT_MINT_BURN_ADMIN = new PublicKey(
+  import.meta.env.VITE_DEFAULT_MINT_BURN_ADMIN ?? "QoR6KXoiyTfd3TRk9gds4pLWbaueFmTgagec9fAWD9e",
+);

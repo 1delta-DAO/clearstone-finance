@@ -18,9 +18,11 @@ import {
 import {
   CSSOL_VAULT,
   CSSOL_VAULT_ST_TOKEN_ACCOUNT,
-  CSSOL_VRT_MINT,
+  DEFAULT_MINT_BURN_ADMIN,
   JITO_VAULT_PROGRAM,
   MINT_TO_DISCRIMINATOR,
+  ROLE_MINT_BURN_ADMIN,
+  SET_SECONDARY_ADMIN_DISCRIMINATOR,
 } from "./addresses";
 
 export interface VaultState {
@@ -29,28 +31,95 @@ export interface VaultState {
   supportedMint: PublicKey;
   vrtSupply: bigint;
   tokensDeposited: bigint;
+  admin: PublicKey;
   feeWallet: PublicKey;
+  mintBurnAdmin: PublicKey;
 }
 
 /**
- * Read minimal vault state from raw bytes. Layout is documented in the
- * SDK's Vault type; offsets verified against the live devnet vault.
+ * Three roles a connected wallet might hold against this vault. The dev
+ * playground enables the Deposit button differently per role.
+ *
+ *   admin                — vault top-level admin. Can rotate any
+ *                          secondary admin. Playground will atomically
+ *                          rotate mintBurnAdmin → user → restore.
+ *   mintBurnAdmin        — already authorized to sign MintTo. Just mints.
+ *   none                 — neither. Deposit blocked; UI disables button.
  */
+export type WalletRole = "admin" | "mintBurnAdmin" | "none";
+
+export function classifyWallet(state: VaultState, wallet: PublicKey | null): WalletRole {
+  if (!wallet) return "none";
+  if (state.mintBurnAdmin.equals(wallet)) return "mintBurnAdmin";
+  if (state.admin.equals(wallet)) return "admin";
+  return "none";
+}
+
+/**
+ * Read minimal vault state from raw bytes. Offsets verified against the
+ * live devnet vault by binary-searching for known pubkey locations:
+ *   8..40   base
+ *   40..72  vrtMint
+ *   72..104 supportedMint
+ *   104..112 vrtSupply (u64 LE)
+ *   112..120 tokensDeposited (u64 LE)
+ *   120..128 depositCapacity
+ *   ...
+ *   admin slots start at offset 440, in this order (32 bytes each):
+ *     admin, delegationAdmin, operatorAdmin, ncnAdmin, slasherAdmin,
+ *     capacityAdmin, feeAdmin, delegateAssetAdmin, feeWallet,
+ *     mintBurnAdmin, metadataAdmin.
+ *   So feeWallet = 440 + 32*8 = 696.
+ *      mintBurnAdmin = 440 + 32*9 = 728.
+ */
+const ADMIN_BLOCK_START = 440;
+const ADMIN_OFFSET = ADMIN_BLOCK_START + 32 * 0;          // 440
+const FEE_WALLET_OFFSET = ADMIN_BLOCK_START + 32 * 8;     // 696
+const MINT_BURN_ADMIN_OFFSET = ADMIN_BLOCK_START + 32 * 9; // 728
+
 export async function readVaultState(conn: Connection, vault: PublicKey): Promise<VaultState> {
   const info = await conn.getAccountInfo(vault, "confirmed");
   if (!info) throw new Error(`vault ${vault.toBase58()} not found`);
   const d = info.data;
-  // 0..8 disc | 8..40 base | 40..72 vrtMint | 72..104 supportedMint
-  // 104..112 vrtSupply | 112..120 tokensDeposited | ...
-  // 496..528 feeWallet (after delegationState + admin slots)
   return {
     base: new PublicKey(d.subarray(8, 40)),
     vrtMint: new PublicKey(d.subarray(40, 72)),
     supportedMint: new PublicKey(d.subarray(72, 104)),
     vrtSupply: d.readBigUInt64LE(104),
     tokensDeposited: d.readBigUInt64LE(112),
-    feeWallet: new PublicKey(d.subarray(496, 528)),
+    admin: new PublicKey(d.subarray(ADMIN_OFFSET, ADMIN_OFFSET + 32)),
+    feeWallet: new PublicKey(d.subarray(FEE_WALLET_OFFSET, FEE_WALLET_OFFSET + 32)),
+    mintBurnAdmin: new PublicKey(d.subarray(MINT_BURN_ADMIN_OFFSET, MINT_BURN_ADMIN_OFFSET + 32)),
   };
+}
+
+/**
+ * Build a SetSecondaryAdmin ix. Used by the playground to atomically
+ * rotate mintBurnAdmin in/out for an admin-driven deposit.
+ *
+ * Account ordering per the SDK:
+ *   config (R), vault (W), admin (signer, R), newAdmin (R)
+ */
+function buildSetSecondaryAdminIx(
+  configPda: PublicKey,
+  vault: PublicKey,
+  admin: PublicKey,
+  newAdmin: PublicKey,
+  role: number,
+): TransactionInstruction {
+  const data = Buffer.alloc(2);
+  data.writeUInt8(SET_SECONDARY_ADMIN_DISCRIMINATOR, 0);
+  data.writeUInt8(role, 1);
+  return new TransactionInstruction({
+    programId: JITO_VAULT_PROGRAM,
+    keys: [
+      { pubkey: configPda, isSigner: false, isWritable: false },
+      { pubkey: vault, isSigner: false, isWritable: true },
+      { pubkey: admin, isSigner: true, isWritable: false },
+      { pubkey: newAdmin, isSigner: false, isWritable: false },
+    ],
+    data,
+  });
 }
 
 /**
@@ -96,23 +165,33 @@ function buildMintToIx(
 }
 
 /**
- * Compose the full SOL → VRT deposit transaction. Returns an unsigned
- * Transaction the wallet adapter then signs.
+ * Compose the full SOL → VRT deposit transaction. The exact ix list
+ * depends on the connected wallet's role on the vault:
  *
- * Steps:
- *   1. Idempotently create user's wSOL ATA + VRT ATA + fee VRT ATA.
- *   2. Transfer `amountLamports` native SOL into the wSOL ATA, sync_native.
- *   3. MintTo on the Jito Vault: pulls wSOL from user → mints VRT to user.
+ *   role = "mintBurnAdmin"  ATAs + transfer + sync_native + MintTo
+ *   role = "admin"          ATAs + transfer + sync_native +
+ *                           SetSecondaryAdmin(MintBurnAdmin = user)  ←
+ *                           MintTo                                   ← all atomic
+ *                           SetSecondaryAdmin(MintBurnAdmin = restoreTo)
+ *   role = "none"           throws — caller should disable the button.
  *
- * Requires the connected wallet to be the vault's `mintBurnAdmin` (since
- * our vault is gated). Raises a clear UI error otherwise.
+ * Returns an unsigned Transaction the wallet adapter then signs.
  */
 export async function buildDepositTx(
   conn: Connection,
   user: PublicKey,
   amountLamports: bigint,
-): Promise<Transaction> {
+  options: { restoreMintBurnAdminTo?: PublicKey } = {},
+): Promise<{ tx: Transaction; mode: WalletRole }> {
   const state = await readVaultState(conn, CSSOL_VAULT);
+  const role = classifyWallet(state, user);
+  if (role === "none") {
+    throw new Error(
+      `connected wallet ${user.toBase58().slice(0, 8)}… holds neither admin nor ` +
+      `mintBurnAdmin role on this vault. Deposit cannot proceed.`,
+    );
+  }
+
   const [configPda] = PublicKey.findProgramAddressSync(
     [Buffer.from("config")],
     JITO_VAULT_PROGRAM,
@@ -120,10 +199,10 @@ export async function buildDepositTx(
 
   const userWsol = getAssociatedTokenAddressSync(state.supportedMint, user, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
   const userVrt = getAssociatedTokenAddressSync(state.vrtMint, user, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
-  const feeVrt = getAssociatedTokenAddressSync(state.vrtMint, state.feeWallet, true, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+  const feeVrt = getAssociatedTokenAddressSync(state.vrtMint, state.feeWallet, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
 
   const tx = new Transaction()
-    .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 300_000 }))
+    .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }))
     .add(createAssociatedTokenAccountIdempotentInstruction(
       user, userWsol, user, state.supportedMint,
       TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -137,21 +216,35 @@ export async function buildDepositTx(
       TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
     ))
     .add(SystemProgram.transfer({ fromPubkey: user, toPubkey: userWsol, lamports: Number(amountLamports) }))
-    .add(createSyncNativeInstruction(userWsol))
-    .add(buildMintToIx(
-      configPda,
-      CSSOL_VAULT,
-      state.vrtMint,
-      user,                              // depositor
-      userWsol,                          // depositorTokenAccount
-      CSSOL_VAULT_ST_TOKEN_ACCOUNT,      // vaultTokenAccount (vault's wSOL ATA)
-      userVrt,                           // depositorVrtTokenAccount
-      feeVrt,                            // vaultFeeTokenAccount
-      user,                              // mintSigner — gated; only mintBurnAdmin works
-      amountLamports,
-      0n,
-    ));
-  return tx;
+    .add(createSyncNativeInstruction(userWsol));
+
+  // Admin path: atomically rotate the gate to the user, mint, restore.
+  // The whole sequence runs as one atomic tx — gate is restored on commit
+  // and never visible as "open" off-chain.
+  if (role === "admin") {
+    tx.add(buildSetSecondaryAdminIx(configPda, CSSOL_VAULT, user, user, ROLE_MINT_BURN_ADMIN));
+  }
+
+  tx.add(buildMintToIx(
+    configPda,
+    CSSOL_VAULT,
+    state.vrtMint,
+    user,
+    userWsol,
+    CSSOL_VAULT_ST_TOKEN_ACCOUNT,
+    userVrt,
+    feeVrt,
+    user,
+    amountLamports,
+    0n,
+  ));
+
+  if (role === "admin") {
+    const restoreTo = options.restoreMintBurnAdminTo ?? DEFAULT_MINT_BURN_ADMIN;
+    tx.add(buildSetSecondaryAdminIx(configPda, CSSOL_VAULT, user, restoreTo, ROLE_MINT_BURN_ADMIN));
+  }
+
+  return { tx, mode: role };
 }
 
 export async function getVrtBalance(conn: Connection, user: PublicKey, vrtMint: PublicKey): Promise<bigint> {

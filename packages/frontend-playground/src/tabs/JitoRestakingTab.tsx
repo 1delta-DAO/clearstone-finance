@@ -8,9 +8,11 @@ import {
 } from "../lib/addresses";
 import {
   buildDepositTx,
+  classifyWallet,
   getVrtBalance,
   readVaultState,
   type VaultState,
+  type WalletRole,
 } from "../lib/jitoVault";
 
 function short(p: string | PublicKey, n = 6): string {
@@ -55,6 +57,8 @@ export default function JitoRestakingTab() {
   const ratio = state && state.vrtSupply > 0n
     ? Number(state.tokensDeposited) / Number(state.vrtSupply)
     : 1;
+  const role: WalletRole = state ? classifyWallet(state, wallet.publicKey) : "none";
+  const canDeposit = role === "admin" || role === "mintBurnAdmin";
 
   async function deposit() {
     if (!wallet.publicKey || !wallet.signTransaction) return;
@@ -64,9 +68,16 @@ export default function JitoRestakingTab() {
     try {
       const lamports = BigInt(Math.round(Number(amount) * LAMPORTS_PER_SOL));
       if (lamports <= 0n) throw new Error("amount must be > 0");
-      const tx = await buildDepositTx(connection, wallet.publicKey, lamports);
+      const built = await buildDepositTx(connection, wallet.publicKey, lamports);
+      const tx = built.tx;
       tx.feePayer = wallet.publicKey;
       tx.recentBlockhash = (await connection.getLatestBlockhash("confirmed")).blockhash;
+      setLog((l) => [
+        ...l,
+        built.mode === "admin"
+          ? "mode: admin → atomic rotate-mint-restore (3-ix gate cycle)"
+          : "mode: mintBurnAdmin → straight MintTo",
+      ]);
       const signed = await wallet.signTransaction(tx);
       setLog((l) => [...l, "submitted, waiting for confirmation …"]);
       const sig = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false });
@@ -118,7 +129,9 @@ export default function JitoRestakingTab() {
                 <div>tokensDeposited: <code>{state.tokensDeposited.toString()}</code></div>
                 <div>vrtSupply: <code>{state.vrtSupply.toString()}</code></div>
                 <div>exchange rate: <code>{ratio.toFixed(8)}</code> SOL / VRT</div>
+                <div>admin: <code>{short(state.admin)}</code></div>
                 <div>fee wallet: <code>{short(state.feeWallet)}</code></div>
+                <div>mintBurnAdmin: <code>{short(state.mintBurnAdmin)}</code></div>
               </>
             ) : (
               <div className="opacity-60">loading …</div>
@@ -132,11 +145,13 @@ export default function JitoRestakingTab() {
             <div>pubkey: <code>{short(wallet.publicKey)}</code></div>
             <div>SOL balance: <code>{fmtSol(solBal)}</code></div>
             <div>VRT balance: <code>{vrt.toString()}</code> ({fmtSol(vrt)} VRT)</div>
-            <div className="opacity-70 mt-2 text-xs">
-              ⓘ The vault's <code>mintBurnAdmin</code> is the governor pool PDA.
-              Only that authority can sign <code>MintTo</code>. To deposit from
-              this UI, the connected wallet must currently hold that role
-              (rotate via <code>SetSecondaryAdmin</code> for testing).
+            <div className={`text-xs mt-2 ${role === "none" ? "text-warning" : "text-success"}`}>
+              {!state ? "loading vault state…"
+                : role === "mintBurnAdmin"
+                  ? "✓ Wallet holds mintBurnAdmin → straight MintTo (gate already open for you)."
+                  : role === "admin"
+                    ? "✓ Wallet is vault admin → atomic rotate-mint-restore (3-ix tx; gate is restored on commit)."
+                    : "⚠ Wallet has no role on this vault. To deposit, connect with the admin or mintBurnAdmin keypair."}
             </div>
           </div>
         </div>
@@ -159,10 +174,11 @@ export default function JitoRestakingTab() {
             <button
               className="btn btn-primary"
               onClick={deposit}
-              disabled={busy || !state}
+              disabled={busy || !state || !canDeposit}
+              title={!canDeposit ? "Wallet has neither admin nor mintBurnAdmin role on this vault" : undefined}
             >
               {busy ? <span className="loading loading-spinner loading-sm" /> : null}
-              Deposit & receive VRT
+              {role === "admin" ? "Deposit (admin: rotate → mint → restore)" : "Deposit & receive VRT"}
             </button>
             <button className="btn btn-ghost btn-sm" onClick={() => void refresh()} disabled={busy}>
               Refresh
