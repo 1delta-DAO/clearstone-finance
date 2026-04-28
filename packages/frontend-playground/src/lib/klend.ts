@@ -85,7 +85,7 @@ export async function buildInitUserMetadataIx(owner: PublicKey, feePayer: Public
       { pubkey: owner, isSigner: true, isWritable: false },
       { pubkey: feePayer, isSigner: true, isWritable: true },
       { pubkey: userMeta, isSigner: false, isWritable: true },
-      { pubkey: DEFAULT, isSigner: false, isWritable: false },        // referrerUserMetadata = default = no referrer
+      { pubkey: KLEND_PROGRAM, isSigner: false, isWritable: false },  // referrerUserMetadata = klend program id sentinel = no referrer
       { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     ],
