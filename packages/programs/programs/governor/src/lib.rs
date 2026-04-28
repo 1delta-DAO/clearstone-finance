@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::program::invoke;
+use anchor_lang::solana_program::program::{invoke, invoke_signed};
 use anchor_lang::solana_program::instruction::{AccountMeta, Instruction};
 use anchor_spl::token_interface;
 use delta_mint::cpi as delta_cpi;
@@ -10,6 +10,12 @@ mod civic_pass;
 use civic_pass::Pass;
 
 declare_id!("6xqW3D1ebp5WjbYh4vwar7ponxrpEaQiVG6uhBYVZtJi");
+
+/// Jito Vault program ID (same on devnet + mainnet).
+const JITO_VAULT_PROGRAM_ID: Pubkey =
+    anchor_lang::solana_program::pubkey!("Vau1t6sLNxnzB7ZDsef8TLbPLfyZMYXH8WTNqUdm9g8");
+/// MintTo ix discriminator on the Jito Vault program (kinobi u8 enum).
+const JITO_VAULT_MINT_TO_DISC: u8 = 11;
 
 #[program]
 pub mod governor {
@@ -423,6 +429,141 @@ pub mod governor {
         emit!(WrapEvent {
             pool: ctx.accounts.pool_config.key(),
             user: ctx.accounts.user.key(),
+            underlying_amount: amount,
+            wrapped_amount: amount,
+        });
+
+        Ok(())
+    }
+
+    /// Wrap underlying into d-tokens AND deposit the underlying into a
+    /// Jito Vault in the same transaction. The Jito Vault holds the
+    /// canonical backing (VRT minted to a pool-PDA-owned VRT vault); the
+    /// d-token (csSOL) is minted to the user 1:1 with the underlying as
+    /// a fungible KYC-gated claim against pool VRT. This replaces the
+    /// older `wrap`'s "park wSOL in a pool ATA" backing model.
+    ///
+    /// Flow:
+    ///   1. Validate KYC (delta-mint::mint_to checks whitelist via CPI).
+    ///   2. CPI Jito Vault MintTo. The pool PDA signs as `mintBurnAdmin`,
+    ///      so the Vault's gate is satisfied without rotating it. User's
+    ///      underlying ATA → vault's wSOL ATA. VRT → pool VRT vault.
+    ///   3. CPI delta-mint::mint_to. Mints `amount` d-tokens to the user.
+    ///
+    /// Requires:
+    ///   - Vault's `mintBurnAdmin` set to `pool_config` PDA
+    ///     (one-time SetSecondaryAdmin during deploy).
+    ///   - Pool VRT vault pre-created at ATA(vrt_mint, pool_pda, off_curve).
+    ///   - User KYC-whitelisted on delta-mint.
+    pub fn wrap_with_jito_vault(ctx: Context<WrapWithJitoVault>, amount: u64) -> Result<()> {
+        require!(
+            ctx.accounts.pool_config.status == PoolStatus::Active,
+            GovernorError::PoolNotActive
+        );
+        require!(amount > 0, GovernorError::InvalidPoolStatus);
+
+        let underlying = ctx.accounts.pool_config.underlying_mint;
+        let bump = ctx.accounts.pool_config.bump;
+        let pool_pda_seeds: &[&[u8]] = &[b"pool".as_ref(), underlying.as_ref(), &[bump]];
+
+        // 1. Build + invoke Jito Vault MintTo manually. The Vault SDK is
+        //    @solana/kit-native; we bypass it and emit the canonical ix.
+        //    Account ordering per @jito-foundation/vault-sdk MintToInput:
+        //       config, vault, vrtMint, depositor (signer, W),
+        //       depositorTokenAccount (W), vaultTokenAccount (W),
+        //       depositorVrtTokenAccount (W), vaultFeeTokenAccount (W),
+        //       tokenProgram, mintSigner (signer).
+        //    Args: u8 disc | u64 amountIn | u64 minAmountOut.
+        let mut data = Vec::with_capacity(1 + 8 + 8);
+        data.push(JITO_VAULT_MINT_TO_DISC);
+        data.extend_from_slice(&amount.to_le_bytes());
+        data.extend_from_slice(&0u64.to_le_bytes()); // minAmountOut = 0 (no slippage check at this layer)
+
+        // Jito Vault enforces `depositor_vrt_token_account.owner == depositor`,
+        // so VRT must mint to the user's own VRT ATA in this CPI. We then
+        // transfer it onward to the pool VRT vault below — net effect: VRT
+        // ends up under pool custody, csSOL is the user-facing token.
+        let metas = vec![
+            AccountMeta::new_readonly(ctx.accounts.jito_vault_config.key(), false),
+            AccountMeta::new(ctx.accounts.jito_vault.key(), false),
+            AccountMeta::new(ctx.accounts.vrt_mint.key(), false),
+            AccountMeta::new(ctx.accounts.user.key(), true),
+            AccountMeta::new(ctx.accounts.user_underlying_ata.key(), false),
+            AccountMeta::new(ctx.accounts.vault_st_token_account.key(), false),
+            AccountMeta::new(ctx.accounts.user_vrt_token_account.key(), false),
+            AccountMeta::new(ctx.accounts.vault_fee_token_account.key(), false),
+            AccountMeta::new_readonly(ctx.accounts.spl_token_program.key(), false),
+            AccountMeta::new_readonly(ctx.accounts.pool_config.key(), true),
+        ];
+
+        let ix = Instruction {
+            program_id: JITO_VAULT_PROGRAM_ID,
+            accounts: metas,
+            data,
+        };
+
+        invoke_signed(
+            &ix,
+            &[
+                ctx.accounts.jito_vault_program.to_account_info(),
+                ctx.accounts.jito_vault_config.to_account_info(),
+                ctx.accounts.jito_vault.to_account_info(),
+                ctx.accounts.vrt_mint.to_account_info(),
+                ctx.accounts.user.to_account_info(),
+                ctx.accounts.user_underlying_ata.to_account_info(),
+                ctx.accounts.vault_st_token_account.to_account_info(),
+                ctx.accounts.user_vrt_token_account.to_account_info(),
+                ctx.accounts.vault_fee_token_account.to_account_info(),
+                ctx.accounts.spl_token_program.to_account_info(),
+                ctx.accounts.pool_config.to_account_info(),
+            ],
+            &[pool_pda_seeds],
+        )?;
+
+        // 1b. Sweep the freshly-minted VRT from user → pool VRT vault. The
+        //     user signs as the source authority (already a Signer in this
+        //     ix's accounts). After this transfer the VRT is under pool
+        //     custody — pool can later redeem it through Jito Vault on
+        //     behalf of csSOL holders during unwrap.
+        token_interface::transfer_checked(
+            CpiContext::new(
+                ctx.accounts.spl_token_program.to_account_info(),
+                token_interface::TransferChecked {
+                    from: ctx.accounts.user_vrt_token_account.to_account_info(),
+                    mint: ctx.accounts.vrt_mint.to_account_info(),
+                    to: ctx.accounts.pool_vrt_token_account.to_account_info(),
+                    authority: ctx.accounts.user.to_account_info(),
+                },
+            ),
+            amount,
+            // VRT mint decimals == underlying decimals (set at vault init = 9 for our wSOL vault).
+            ctx.accounts.pool_config.decimals,
+        )?;
+
+        // 2. Mint d-tokens to user via delta-mint CPI. The pool PDA is
+        //    delta-mint's mint authority post-`activate_wrapping`.
+        delta_cpi::mint_to(
+            CpiContext::new_with_signer(
+                ctx.accounts.delta_mint_program.to_account_info(),
+                delta_accounts::MintTokens {
+                    authority: ctx.accounts.pool_config.to_account_info(),
+                    mint_config: ctx.accounts.dm_mint_config.to_account_info(),
+                    mint: ctx.accounts.wrapped_mint.to_account_info(),
+                    mint_authority: ctx.accounts.dm_mint_authority.to_account_info(),
+                    whitelist_entry: ctx.accounts.whitelist_entry.to_account_info(),
+                    destination: ctx.accounts.user_wrapped_ata.to_account_info(),
+                    token_program: ctx.accounts.wrapped_token_program.to_account_info(),
+                },
+                &[pool_pda_seeds],
+            ),
+            amount,
+        )?;
+
+        emit!(WrapWithJitoVaultEvent {
+            pool: ctx.accounts.pool_config.key(),
+            user: ctx.accounts.user.key(),
+            jito_vault: ctx.accounts.jito_vault.key(),
+            pool_vrt_token_account: ctx.accounts.pool_vrt_token_account.key(),
             underlying_amount: amount,
             wrapped_amount: amount,
         });
@@ -939,6 +1080,90 @@ pub struct WrapTokens<'info> {
     pub wrapped_token_program: Interface<'info, token_interface::TokenInterface>,
 }
 
+/// Wrap underlying into d-tokens AND deposit underlying into a Jito Vault
+/// in one tx. Pool PDA signs CPI MintTo as the Vault's `mintBurnAdmin`.
+#[derive(Accounts)]
+pub struct WrapWithJitoVault<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    /// Pool config — keyed by underlying mint, signs CPIs as mintBurnAdmin
+    /// + delta-mint authority. Marked mut because delta-mint::mint_to
+    /// expects the signer (us, via PDA) as a writable account.
+    #[account(
+        mut,
+        seeds = [b"pool", pool_config.underlying_mint.as_ref()],
+        bump = pool_config.bump,
+    )]
+    pub pool_config: Account<'info, PoolConfig>,
+
+    /// User's underlying token account — source of wSOL transferred into
+    /// the Jito Vault during MintTo.
+    #[account(mut)]
+    pub user_underlying_ata: InterfaceAccount<'info, token_interface::TokenAccount>,
+
+    // ── Jito Vault accounts ─────────────────────────────────────────────
+    /// CHECK: program id check inside the ix.
+    #[account(address = JITO_VAULT_PROGRAM_ID)]
+    pub jito_vault_program: UncheckedAccount<'info>,
+
+    /// CHECK: Jito Vault Config singleton PDA.
+    pub jito_vault_config: UncheckedAccount<'info>,
+
+    /// CHECK: our Jito Vault PDA.
+    #[account(mut)]
+    pub jito_vault: UncheckedAccount<'info>,
+
+    /// CHECK: VRT mint owned by Jito Vault.
+    #[account(mut)]
+    pub vrt_mint: UncheckedAccount<'info>,
+
+    /// CHECK: Vault's underlying-token ATA — receives the user's wSOL.
+    #[account(mut)]
+    pub vault_st_token_account: UncheckedAccount<'info>,
+
+    /// CHECK: User's VRT ATA — Jito Vault MintTo enforces
+    /// `depositor_vrt.owner == depositor`, so VRT mints here first. The
+    /// next step in the same ix sweeps it to `pool_vrt_token_account`.
+    #[account(mut)]
+    pub user_vrt_token_account: UncheckedAccount<'info>,
+
+    /// CHECK: Pool's VRT vault — ATA(vrt_mint, pool_pda, off_curve).
+    /// Final destination of the freshly-minted VRT. Pool holds the
+    /// canonical backing for csSOL supply.
+    #[account(mut)]
+    pub pool_vrt_token_account: UncheckedAccount<'info>,
+
+    /// CHECK: Vault's fee VRT ATA — checked by Jito Vault program.
+    #[account(mut)]
+    pub vault_fee_token_account: UncheckedAccount<'info>,
+
+    /// CHECK: SPL Token program (Jito Vault expects classic SPL Token for wSOL/VRT).
+    pub spl_token_program: UncheckedAccount<'info>,
+
+    // ── delta-mint accounts ─────────────────────────────────────────────
+    /// CHECK: delta-mint MintConfig — address validated.
+    #[account(address = pool_config.dm_mint_config)]
+    pub dm_mint_config: UncheckedAccount<'info>,
+
+    /// CHECK: Wrapped Token-2022 mint — address validated.
+    #[account(mut, address = pool_config.wrapped_mint)]
+    pub wrapped_mint: UncheckedAccount<'info>,
+
+    /// CHECK: delta-mint mint authority PDA.
+    pub dm_mint_authority: UncheckedAccount<'info>,
+
+    /// CHECK: User's whitelist entry — validated by delta-mint CPI.
+    pub whitelist_entry: UncheckedAccount<'info>,
+
+    /// CHECK: User's d-token ATA — destination for minted csSOL.
+    #[account(mut)]
+    pub user_wrapped_ata: UncheckedAccount<'info>,
+
+    pub delta_mint_program: Program<'info, DeltaMintProgram>,
+    pub wrapped_token_program: Interface<'info, token_interface::TokenInterface>,
+}
+
 /// Unwrap d-tokens → underlying tokens.
 #[derive(Accounts)]
 pub struct UnwrapTokens<'info> {
@@ -1202,6 +1427,16 @@ pub struct SelfRegisterEvent {
 pub struct WrapEvent {
     pub pool: Pubkey,
     pub user: Pubkey,
+    pub underlying_amount: u64,
+    pub wrapped_amount: u64,
+}
+
+#[event]
+pub struct WrapWithJitoVaultEvent {
+    pub pool: Pubkey,
+    pub user: Pubkey,
+    pub jito_vault: Pubkey,
+    pub pool_vrt_token_account: Pubkey,
     pub underlying_amount: u64,
     pub wrapped_amount: u64,
 }

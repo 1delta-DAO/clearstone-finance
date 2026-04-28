@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
 // Logo lives in /public — design-system SVGs are not typed for TS imports.
 const logo = "/logo.svg";
@@ -59,7 +59,7 @@ function Eyebrow({ children, dark = false }: { children: React.ReactNode; dark?:
 /* ---- Top Nav ------------------------------------------------- */
 function Nav() {
   return (
-    <nav className="fixed top-0 left-0 right-0 z-30 backdrop-blur-md bg-[#070D1F]/65 border-b border-white/5">
+    <nav className="fixed top-0 left-0 right-0 z-30 bg-[#070D1F]/92 border-b border-white/5">
       <div className="max-w-6xl mx-auto px-6 md:px-10 h-16 flex items-center justify-between">
         <a href="#top" className="flex items-center gap-3">
           <img src={logo} alt="Clearstone Fusion" className="h-7 w-auto" />
@@ -83,19 +83,63 @@ function Nav() {
 /* ---- Hero ---------------------------------------------------- */
 function Hero() {
   const heroRef = useRef<HTMLElement>(null);
-  const [px, setPx] = useState({ x: 0, y: 0 });
 
+  // Smooth pointer parallax via lerp loop + CSS variables.
+  // No React state — direct DOM updates, frame-paced. Far smoother than
+  // setState-on-mousemove + a long CSS transition (which always feels laggy).
   useEffect(() => {
     const el = heroRef.current;
     if (!el) return;
-    const onMove = (e: MouseEvent) => {
-      const r = el.getBoundingClientRect();
-      const x = ((e.clientX - r.left) / r.width - 0.5) * 2;
-      const y = ((e.clientY - r.top) / r.height - 0.5) * 2;
-      setPx({ x, y });
+
+    const target  = { x: 0, y: 0 };
+    const current = { x: 0, y: 0 };
+    let raf = 0;
+    let inView = true;
+    let running = false;
+
+    const io = new IntersectionObserver(
+      ([e]) => { inView = e.isIntersecting; },
+      { threshold: 0 }
+    );
+    io.observe(el);
+
+    // Critically-damped low-pass: smooths jitter, settles in ~10 frames
+    const k = 0.09;
+
+    const tick = () => {
+      current.x += (target.x - current.x) * k;
+      current.y += (target.y - current.y) * k;
+      el.style.setProperty("--px-x", current.x.toFixed(4));
+      el.style.setProperty("--px-y", current.y.toFixed(4));
+
+      const settled =
+        Math.abs(target.x - current.x) < 0.0008 &&
+        Math.abs(target.y - current.y) < 0.0008;
+      if (settled) {
+        running = false;
+        raf = 0;
+      } else {
+        raf = requestAnimationFrame(tick);
+      }
     };
-    window.addEventListener("mousemove", onMove);
-    return () => window.removeEventListener("mousemove", onMove);
+
+    const onMove = (e: MouseEvent) => {
+      if (!inView) return;
+      const r = el.getBoundingClientRect();
+      target.x = ((e.clientX - r.left) / r.width  - 0.5) * 2;
+      target.y = ((e.clientY - r.top)  / r.height - 0.5) * 2;
+      if (!running) {
+        running = true;
+        raf = requestAnimationFrame(tick);
+      }
+    };
+
+    window.addEventListener("mousemove", onMove, { passive: true });
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      io.disconnect();
+      if (raf) cancelAnimationFrame(raf);
+    };
   }, []);
 
   const wordmark = "clearstone".split("");
@@ -110,10 +154,7 @@ function Hero() {
       <div className="absolute inset-0 hero-mesh pointer-events-none" />
 
       {/* Slow orbital conic sweep behind the logo */}
-      <div
-        className="absolute hero-conic pointer-events-none"
-        style={{ transform: `translate3d(${px.x * -10}px, ${px.y * -10}px, 0)` }}
-      />
+      <div className="absolute hero-conic pointer-events-none" />
 
       {/* Faint vector grid */}
       <svg className="absolute inset-0 w-full h-full opacity-[0.04] pointer-events-none" xmlns="http://www.w3.org/2000/svg">
@@ -125,39 +166,15 @@ function Hero() {
         <rect width="100%" height="100%" fill="url(#g)" />
       </svg>
 
-      {/* SVG noise grain — premium texture */}
-      <svg className="absolute inset-0 w-full h-full opacity-[0.05] pointer-events-none mix-blend-overlay">
-        <filter id="hero-noise">
-          <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" stitchTiles="stitch" />
-          <feColorMatrix type="saturate" values="0" />
-        </filter>
-        <rect width="100%" height="100%" filter="url(#hero-noise)" />
-      </svg>
-
-      {/* Hero content with subtle parallax */}
-      <div
-        className="relative max-w-4xl mx-auto px-6 text-center"
-        style={{
-          transform: `translate3d(${px.x * 6}px, ${px.y * 6}px, 0)`,
-          transition: "transform 0.5s cubic-bezier(.2,.7,.2,1)",
-        }}
-      >
-        {/* Logo with 3D tilt, halo plate, accent ring, glow pulse */}
-        <div
-          className="hero-logo-wrap relative inline-flex items-center justify-center mb-10"
-          style={{
-            transform: `perspective(1200px) rotateY(${px.x * 7}deg) rotateX(${-px.y * 5}deg)`,
-            transition: "transform 0.4s cubic-bezier(.2,.7,.2,1)",
-          }}
-        >
-          <div className="hero-halo"  aria-hidden />
-          <div className="hero-ring"  aria-hidden />
-          <div className="hero-glow"  aria-hidden />
-          <span className="hero-accent-spark"  aria-hidden />
+      {/* Hero content (no whole-block parallax — only the logo tilts) */}
+      <div className="relative max-w-4xl mx-auto px-6 text-center">
+        {/* Logo with subtle 3D tilt driven by --px-x / --px-y */}
+        <div className="hero-logo-wrap relative inline-flex items-center justify-center mb-10">
+          <div className="hero-halo" aria-hidden />
           <img
             src={logo}
             alt=""
-            className="relative z-10 h-44 md:h-56 w-auto drop-shadow-[0_30px_60px_rgba(7,13,31,0.85)] hero-float"
+            className="relative z-10 h-44 md:h-56 w-auto drop-shadow-[0_24px_50px_rgba(7,13,31,0.7)] hero-float"
           />
         </div>
 

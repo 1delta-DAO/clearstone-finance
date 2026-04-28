@@ -46,100 +46,76 @@ body {
 }
 .hero-float { animation: hero-float 6s ease-in-out infinite; }
 
-/* Drifting mesh gradient — three blobs that breathe */
+/* Drifting mesh gradient — GPU-friendly (transform-only animation) */
 .hero-mesh {
   background:
-    radial-gradient(40% 35% at 22% 28%, rgba(79,96,124,0.50)  0%, rgba(79,96,124,0) 70%),
-    radial-gradient(48% 42% at 78% 24%, rgba(166,179,197,0.28) 0%, rgba(166,179,197,0) 70%),
-    radial-gradient(55% 50% at 50% 78%, rgba(31,45,72,0.65)   0%, rgba(7,13,31,0)    78%);
-  background-size: 100% 100%;
-  animation: mesh-drift 18s ease-in-out infinite alternate;
+    radial-gradient(40% 35% at 22% 28%, rgba(79,96,124,0.45)  0%, rgba(79,96,124,0) 70%),
+    radial-gradient(48% 42% at 78% 24%, rgba(166,179,197,0.22) 0%, rgba(166,179,197,0) 70%),
+    radial-gradient(55% 50% at 50% 78%, rgba(31,45,72,0.55)   0%, rgba(7,13,31,0)    78%);
+  animation: mesh-drift 24s ease-in-out infinite alternate;
+  will-change: transform;
+  transform: translateZ(0);
 }
 @keyframes mesh-drift {
-  0%   { background-position: 0%   0%, 100% 0%,  50% 100%; transform: scale(1);    }
-  50%  { background-position: 6%  -3%, 92% 6%,   55% 96%;  transform: scale(1.04); }
-  100% { background-position: -4%  4%, 104% -2%, 46% 104%; transform: scale(1);    }
+  0%   { transform: scale(1)    rotate(0deg) translateZ(0); }
+  100% { transform: scale(1.04) rotate(2deg) translateZ(0); }
 }
 
-/* Slow rotating conic sweep behind the logo (the "scanning light") */
+/* Slow rotating conic sweep — reduced blur for performance */
 .hero-conic {
   position: absolute;
-  width: 760px; height: 760px;
+  width: 720px; height: 720px;
   left: 50%; top: 50%;
-  margin-left: -380px; margin-top: -380px;
+  margin-left: -360px; margin-top: -360px;
   background: conic-gradient(
     from 0deg,
     rgba(166,179,197,0)    0deg,
-    rgba(166,179,197,0.06) 50deg,
-    rgba(226,231,239,0.20) 90deg,
-    rgba(166,179,197,0.06) 130deg,
+    rgba(166,179,197,0.05) 50deg,
+    rgba(226,231,239,0.16) 90deg,
+    rgba(166,179,197,0.05) 130deg,
     rgba(166,179,197,0)    220deg,
     rgba(166,179,197,0)    360deg
   );
   border-radius: 50%;
-  filter: blur(28px);
-  animation: conic-spin 26s linear infinite;
+  filter: blur(14px);
+  animation: conic-spin 32s linear infinite;
+  will-change: transform;
+  transform: translateZ(0);
+}
+@keyframes conic-spin {
+  from { transform: rotate(0deg)   translateZ(0); }
+  to   { transform: rotate(360deg) translateZ(0); }
+}
+
+/* Logo tilt — driven by --px-x / --px-y CSS variables set by an rAF
+   lerp loop. No CSS transition (the lerp is the smoothing) so cursor
+   tracking feels organic, not laggy. */
+.hero-logo-wrap {
+  transform:
+    perspective(1200px)
+    rotateY(calc(var(--px-x, 0) * 4deg))
+    rotateX(calc(var(--px-y, 0) * -3deg));
+  transform-origin: center;
   will-change: transform;
 }
-@keyframes conic-spin { to { transform: rotate(360deg); } }
 
-/* Logo halo plate — soft contained "spotlight" disc that lifts the mark
-   off the deep navy page (the dark fusion mass otherwise melts into bg) */
+/* Single soft halo behind the logo — brighter cool wash so the mark
+   doesn't melt into the deep navy page. No filter blur (the radial
+   gradient is already soft). One element. One color family. */
 .hero-halo {
   position: absolute;
-  width: 360px; height: 360px;
+  width: 420px; height: 420px;
   border-radius: 50%;
-  background:
-    radial-gradient(50% 50% at 50% 45%, rgba(201,168,118,0.18) 0%,  rgba(201,168,118,0) 65%),
-    radial-gradient(50% 50% at 50% 55%, rgba(166,179,197,0.30) 0%,  rgba(166,179,197,0) 70%);
-  filter: blur(8px);
+  background: radial-gradient(50% 50% at 50% 50%,
+    rgba(197,207,220,0.22) 0%,
+    rgba(166,179,197,0.12) 35%,
+    rgba(124,139,163,0.04) 60%,
+    rgba(166,179,197,0)    78%);
   pointer-events: none;
   z-index: 0;
-}
-
-/* Thin "watch face" ring framing the logo */
-.hero-ring {
-  position: absolute;
-  width: 300px; height: 300px;
-  border-radius: 50%;
-  border: 1px solid rgba(201,168,118,0.45);
-  box-shadow:
-    inset 0 0 24px rgba(201,168,118,0.10),
-    0 0 28px rgba(7,13,31,0.4);
-  background: radial-gradient(closest-side, rgba(166,179,197,0) 75%, rgba(201,168,118,0.06) 100%);
-  pointer-events: none;
-  z-index: 1;
-}
-
-/* Brighter inner glow pulse */
-.hero-glow {
-  position: absolute;
-  width: 240px; height: 240px;
-  border-radius: 50%;
-  background: radial-gradient(50% 50% at 50% 50%, rgba(226,231,239,0.42) 0%, rgba(166,179,197,0) 72%);
-  filter: blur(22px);
-  animation: glow-pulse 4.2s ease-in-out infinite;
-  pointer-events: none;
-  z-index: 2;
-}
-
-/* Single warm-accent specular spark — sits on the upper-right of the ring */
-.hero-accent-spark {
-  position: absolute;
-  width: 6px; height: 6px;
-  border-radius: 50%;
-  background: #D9B987;
-  box-shadow: 0 0 14px 2px rgba(217,185,135,0.85);
-  top: calc(50% - 150px);
-  right: calc(50% - 150px);
-  transform: translate(2px, -2px);
-  pointer-events: none;
-  z-index: 3;
-  animation: spark-pulse 3.6s ease-in-out infinite;
-}
-@keyframes spark-pulse {
-  0%,100% { opacity: 0.55; transform: translate(2px,-2px) scale(1);   }
-  50%     { opacity: 1;    transform: translate(2px,-2px) scale(1.4); }
+  animation: glow-pulse 5s ease-in-out infinite;
+  will-change: opacity, transform;
+  transform: translateZ(0);
 }
 @keyframes glow-pulse {
   0%,100% { opacity: 0.55; transform: scale(1);    }
@@ -207,12 +183,12 @@ body {
   background: linear-gradient(90deg, transparent, rgba(166,179,197,0.35), transparent);
 }
 
-/* Card surfaces tuned for the deep background */
+/* Card surfaces tuned for the deep background — solid surfaces (no
+   backdrop-filter) so scrolling stays smooth */
 .card-stone {
-  background: linear-gradient(180deg, rgba(166,179,197,0.06) 0%, rgba(31,45,72,0.18) 100%);
+  background: linear-gradient(180deg, rgba(33,46,72,0.55) 0%, rgba(20,30,52,0.65) 100%);
   border: 1px solid rgba(166,179,197,0.14);
   border-radius: 18px;
-  backdrop-filter: blur(12px);
   transition: transform .35s cubic-bezier(.2,.7,.2,1), border-color .35s, box-shadow .35s;
 }
 .card-stone:hover {
