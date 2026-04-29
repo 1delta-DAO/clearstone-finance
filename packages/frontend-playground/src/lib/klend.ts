@@ -57,13 +57,13 @@ export function userMetadataPda(owner: PublicKey): PublicKey {
  * Obligation PDA — for default obligations the seeds are:
  *   [tag(=0), id(=0), owner, market, default_pubkey, default_pubkey]
  */
-export function obligationPda(owner: PublicKey, tag = 0, id = 0): PublicKey {
+export function obligationPda(owner: PublicKey, tag = 0, id = 0, market: PublicKey = KLEND_MARKET): PublicKey {
   return PublicKey.findProgramAddressSync(
     [
       Uint8Array.from([tag]),
       Uint8Array.from([id]),
       owner.toBuffer(),
-      KLEND_MARKET.toBuffer(),
+      market.toBuffer(),
       DEFAULT.toBuffer(),
       DEFAULT.toBuffer(),
     ],
@@ -421,4 +421,74 @@ export async function buildWithdrawCollateralAndRedeemIx(args: {
   });
 }
 
-void KLEND_GLOBAL_CONFIG; // referenced indirectly via update_reserve_config; kept here as a static address constant
+void KLEND_GLOBAL_CONFIG;
+
+/** Build klend `borrow_obligation_liquidity`. Caller must precede with
+ *  refresh_reserve(borrowReserve) at N-2 and refresh_obligation at N-1. */
+export async function buildBorrowObligationLiquidityIx(args: {
+  user: PublicKey;
+  borrowReserve: PublicKey;
+  liquidityMint: PublicKey;
+  liquidityTokenProgram: PublicKey;
+  userDestinationLiquidity: PublicKey;
+  amount: bigint;
+}): Promise<TransactionInstruction> {
+  const obligation = obligationPda(args.user);
+  const lma = lendingMarketAuthority(KLEND_MARKET);
+  const liqSupply = reserveLiqSupply(args.borrowReserve);
+  const data = new Uint8Array(8 + 8);
+  data.set(await sha256_8("global:borrow_obligation_liquidity"), 0);
+  new DataView(data.buffer).setBigUint64(8, args.amount, true);
+
+  return new TransactionInstruction({
+    programId: KLEND_PROGRAM,
+    keys: [
+      { pubkey: args.user, isSigner: true, isWritable: true },
+      { pubkey: obligation, isSigner: false, isWritable: true },
+      { pubkey: KLEND_MARKET, isSigner: false, isWritable: false },
+      { pubkey: lma, isSigner: false, isWritable: false },
+      { pubkey: args.borrowReserve, isSigner: false, isWritable: true },
+      { pubkey: args.liquidityMint, isSigner: false, isWritable: false },
+      { pubkey: liqSupply, isSigner: false, isWritable: true },
+      { pubkey: feeReceiverPda(args.borrowReserve), isSigner: false, isWritable: true },
+      { pubkey: args.userDestinationLiquidity, isSigner: false, isWritable: true },
+      { pubkey: KLEND_PROGRAM, isSigner: false, isWritable: false }, // referrer_token_state = None
+      { pubkey: args.liquidityTokenProgram, isSigner: false, isWritable: false },
+      { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.from(data),
+  });
+}
+
+/** Build klend `repay_obligation_liquidity`. Caller must precede with
+ *  refresh_reserve(repayReserve) at N-2 and refresh_obligation at N-1. */
+export async function buildRepayObligationLiquidityIx(args: {
+  user: PublicKey;
+  repayReserve: PublicKey;
+  liquidityMint: PublicKey;
+  liquidityTokenProgram: PublicKey;
+  userSourceLiquidity: PublicKey;
+  amount: bigint;
+}): Promise<TransactionInstruction> {
+  const obligation = obligationPda(args.user);
+  const liqSupply = reserveLiqSupply(args.repayReserve);
+  const data = new Uint8Array(8 + 8);
+  data.set(await sha256_8("global:repay_obligation_liquidity"), 0);
+  new DataView(data.buffer).setBigUint64(8, args.amount, true);
+
+  return new TransactionInstruction({
+    programId: KLEND_PROGRAM,
+    keys: [
+      { pubkey: args.user, isSigner: true, isWritable: true },
+      { pubkey: obligation, isSigner: false, isWritable: true },
+      { pubkey: KLEND_MARKET, isSigner: false, isWritable: false },
+      { pubkey: args.repayReserve, isSigner: false, isWritable: true },
+      { pubkey: args.liquidityMint, isSigner: false, isWritable: false },
+      { pubkey: liqSupply, isSigner: false, isWritable: true },
+      { pubkey: args.userSourceLiquidity, isSigner: false, isWritable: true },
+      { pubkey: args.liquidityTokenProgram, isSigner: false, isWritable: false },
+      { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.from(data),
+  });
+}
