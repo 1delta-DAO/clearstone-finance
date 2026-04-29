@@ -998,16 +998,15 @@ pub mod governor {
         )?;
 
         // 3. Jito EnqueueWithdrawal — split-signer setup:
-        //    - staker = base = user (system-owned, funds the ticket
-        //      PDA's rent via system_program::transfer; ticket is
-        //      derived from base = user, so each user gets their own
-        //      ticket PDA address space).
+        //    - staker = user (system-owned, funds the ticket PDA's
+        //      rent via system_program::transfer).
+        //    - base = governor-derived PDA per (pool, queue.total_minted)
+        //      (signed via invoke_signed); each enqueue gets a unique
+        //      ticket address. Replaces the v1 ephemeral-keypair pattern.
         //    - burn_signer = pool_pda (the vault's mint_burn_admin set
-        //      at init, gates VRT-burning operations; signed via PDA
-        //      seeds in invoke_signed).
-        //    Together: user signs the outer governor ix (giving us
-        //    user-signed staker+base), invoke_signed adds the pool PDA
-        //    signature for burn_signer.
+        //      at init, gates VRT-burning operations).
+        //    User signs the outer governor ix (covers `staker`);
+        //    invoke_signed adds PDA signatures for base + burn_signer.
         let mut data = Vec::with_capacity(1 + 8);
         data.push(JITO_VAULT_ENQUEUE_WITHDRAWAL_DISC);
         data.extend_from_slice(&amount.to_le_bytes());
@@ -1031,6 +1030,18 @@ pub mod governor {
             data,
         };
 
+        // Bump for the `base` PDA — Anchor populated it from the seeds
+        // constraint on the EnqueueWithdrawViaPool struct.
+        let base_bump = ctx.bumps.base;
+        let pool_key = ctx.accounts.pool_config.key();
+        let nonce_le = ctx.accounts.withdraw_queue.total_cssol_wt_minted.to_le_bytes();
+        let base_seeds: &[&[u8]] = &[
+            b"wt_base".as_ref(),
+            pool_key.as_ref(),
+            nonce_le.as_ref(),
+            &[base_bump],
+        ];
+
         invoke_signed(
             &ix,
             &[
@@ -1046,7 +1057,7 @@ pub mod governor {
                 ctx.accounts.system_program.to_account_info(),
                 ctx.accounts.pool_config.to_account_info(),
             ],
-            &[pool_seeds], // signs as burn_signer = pool_pda
+            &[pool_seeds, base_seeds], // signs as burn_signer (pool PDA) AND base (per-enqueue PDA)
         )?;
 
         // 3. Mint X csSOL-WT to user via delta-mint CPI. The pool PDA
@@ -2175,13 +2186,24 @@ pub struct EnqueueWithdrawViaPool<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
 
-    /// Ephemeral keypair the client generates for *this* enqueue. Used
-    /// as Jito's `base` for the ticket PDA so each enqueue produces a
-    /// unique ticket address (so the user isn't blocked from a second
-    /// enqueue while their first ticket is still locked). Not stored
-    /// anywhere — once the ticket exists, the client can discard the
-    /// keypair; only the ticket_pda matters going forward.
-    pub base: Signer<'info>,
+    /// Per-enqueue base PDA used as Jito's `base` for the ticket PDA
+    /// derivation, so each enqueue produces a unique ticket address.
+    /// Seeds: [b"wt_base", pool_config, withdraw_queue.total_cssol_wt_minted_le].
+    /// Using the queue's running mint counter as the nonce ensures
+    /// uniqueness across all enqueues (counter only ever increases).
+    /// Replaces the v1 ephemeral-keypair approach so the user only
+    /// needs one wallet signature — fewer "suspicious tx" wallet
+    /// warnings.
+    /// CHECK: address derivation enforced via seeds + bump constraint.
+    #[account(
+        seeds = [
+            b"wt_base",
+            pool_config.key().as_ref(),
+            &withdraw_queue.total_cssol_wt_minted.to_le_bytes(),
+        ],
+        bump,
+    )]
+    pub base: UncheckedAccount<'info>,
 
     #[account(
         mut,

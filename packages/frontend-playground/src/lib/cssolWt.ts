@@ -43,6 +43,22 @@ export function withdrawQueuePda(): PublicKey {
   )[0];
 }
 
+/**
+ * Per-enqueue `base` PDA used to derive a fresh Jito ticket address.
+ * Replaces v1's client-side ephemeral keypair (no extra signer needed
+ * → fewer wallet "suspicious" warnings). Nonce = the queue's running
+ * `total_cssol_wt_minted` counter at the moment the enqueue ix runs;
+ * caller must read it from chain right before submitting.
+ */
+export function withdrawBasePda(nonce: bigint): PublicKey {
+  const nonceBytes = Buffer.alloc(8);
+  nonceBytes.writeBigUInt64LE(nonce);
+  return PublicKey.findProgramAddressSync(
+    [enc.encode("wt_base"), POOL_PDA.toBuffer(), nonceBytes],
+    GOVERNOR_PROGRAM,
+  )[0];
+}
+
 /** csSOL-WT mint's MintConfig PDA — created by setup-cssol-wt-mint.ts. */
 export function cssolWtMintConfig(cssolWtMint: PublicKey): PublicKey {
   return PublicKey.findProgramAddressSync(
@@ -103,7 +119,7 @@ export async function buildEnqueueWithdrawViaPoolIx(args: {
     programId: GOVERNOR_PROGRAM,
     keys: [
       { pubkey: args.user, isSigner: true, isWritable: true },
-      { pubkey: args.base, isSigner: true, isWritable: false },              // ephemeral base keypair (signer)
+      { pubkey: args.base, isSigner: false, isWritable: false },             // governor-derived PDA, signed via invoke_signed inside the program
       { pubkey: POOL_PDA, isSigner: false, isWritable: true },
       { pubkey: queue, isSigner: false, isWritable: true },
       { pubkey: CSSOL_MINT, isSigner: false, isWritable: true },

@@ -3,15 +3,16 @@ import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import {
   AddressLookupTableAccount,
   ComputeBudgetProgram,
-  Keypair,
   LAMPORTS_PER_SOL,
   PublicKey,
-  SystemProgram,
   Transaction,
   TransactionInstruction,
   TransactionMessage,
   VersionedTransaction,
 } from "@solana/web3.js";
+// Keep Keypair import path resolved by send() helper signature even though
+// we no longer instantiate one — extraSigners parameter still types as Keypair[].
+import type { Keypair } from "@solana/web3.js";
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   NATIVE_MINT,
@@ -50,6 +51,7 @@ import {
   decodeJitoConfigEpochLength,
   decodeTicketSlotUnstaked,
   decodeWithdrawQueue,
+  withdrawBasePda,
   withdrawQueuePda,
   type DecodedQueue,
 } from "../lib/cssolWt";
@@ -262,12 +264,14 @@ export default function OneStepUnwindTab() {
         [new TextEncoder().encode("config")], JITO_VAULT_PROGRAM,
       );
 
-      // Per-call Jito base keypair; user owns the ticket.
-      const baseKp = Keypair.generate();
+      // Per-call base = governor PDA derived from (pool, queue.total_minted).
+      // No client-side keypair; the program signs via invoke_signed.
+      if (!queue) throw new Error("queue not loaded yet — refresh and retry");
+      const basePubkey = withdrawBasePda(queue.totalCssolWtMinted);
       const [vaultStakerWithdrawalTicket] = PublicKey.findProgramAddressSync(
         [
           new TextEncoder().encode("vault_staker_withdrawal_ticket"),
-          CSSOL_VAULT.toBuffer(), baseKp.publicKey.toBuffer(),
+          CSSOL_VAULT.toBuffer(), basePubkey.toBuffer(),
         ],
         JITO_VAULT_PROGRAM,
       );
@@ -293,8 +297,10 @@ export default function OneStepUnwindTab() {
       // based on actual position.
       const ixes: TransactionInstruction[] = [];
 
-      // 0-1: compute budget (high — flash + 2 deposits + withdraw + governor + flash_repay)
-      ixes.push(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }));
+      // 0-1: compute budget. Successful tx consumed ~1.18M of the prior
+      // 1.4M cap; 1.2M is comfortable headroom and reduces the
+      // "high-CU == suspicious" heuristic flag in some wallets.
+      ixes.push(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_200_000 }));
       ixes.push(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 10_000 }));
 
       // 2-5: idempotent ATA creates (some may already exist)
@@ -327,19 +333,59 @@ export default function OneStepUnwindTab() {
         liquidityTokenProgram: TOKEN_2022_PROGRAM_ID, amount: lamports,
       }));
 
-      // Refresh csSOL FIRST — the obligation already contains a csSOL
-      // deposit, so any subsequent `refresh_obligation` call iterates
-      // it and requires it to be fresh-in-current-slot. Same-tx
-      // refreshes stay fresh for the whole tx, so we only do this
-      // once even though klend's positional check_refresh wants
-      // refresh_reserve immediately at N-2.
+      // Read the obligation's current deposit reserves so refresh_obligation
+      // gets the right remaining-accounts list. After a previous
+      // leveraged-unwind, the obligation has BOTH csSOL and csSOL-WT;
+      // hardcoding [csSOL] trips InvalidAccountInput (6006).
+      const obAddr = PublicKey.findProgramAddressSync(
+        [
+          new TextEncoder().encode("user_meta"), // unused; placeholder for syntactic correctness
+        ], JITO_VAULT_PROGRAM, // unused
+      )[0]; void obAddr;
+      const obligationAddr = PublicKey.findProgramAddressSync(
+        [Uint8Array.from([0]), Uint8Array.from([0]), owner.toBuffer(),
+         new PublicKey("2gRy7fYaPe8ooB1HqTfa2sJeJZ8KdVebhj88tgShyejW").toBuffer(),
+         PublicKey.default.toBuffer(), PublicKey.default.toBuffer()],
+        new PublicKey("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD"),
+      )[0];
+      const obAccount = await connection.getAccountInfo(obligationAddr, "confirmed");
+      const preDepositReserves: PublicKey[] = [];
+      if (obAccount && obAccount.data.length >= 2286) {
+        for (let i = 0; i < 8; i++) {
+          const off = 96 + i * 136;
+          const slotBytes = obAccount.data.subarray(off, off + 32);
+          if (slotBytes.some((b) => b !== 0)) {
+            preDepositReserves.push(new PublicKey(slotBytes));
+          }
+        }
+      }
+      // For the post-deposit refresh, the WT reserve will also be present.
+      // CSSOL_WT_RESERVE is null-checked at function entry; alias for narrowing.
+      const wtReserve = CSSOL_WT_RESERVE;
+      const postDepositReserves = preDepositReserves.some((r) => r.equals(wtReserve))
+        ? preDepositReserves
+        : [...preDepositReserves, wtReserve];
+
+      // Refresh every reserve referenced by the obligation BEFORE any
+      // refresh_obligation. Same-tx refreshes stay fresh for the whole
+      // tx, so each reserve only needs one upfront refresh. klend's
+      // positional check_refresh requires the IMMEDIATE N-2 to be
+      // refresh_reserve(<that reserve>) for each deposit/withdraw ix —
+      // we satisfy that by the targeted refresh_reserve calls below.
+      for (const r of preDepositReserves) {
+        if (!r.equals(CSSOL_RESERVE) && !r.equals(CSSOL_WT_RESERVE)) {
+          // any other reserve uses the csSOL accrual oracle in v1
+          ixes.push(await buildRefreshReserveIx(r, CSSOL_RESERVE_ORACLE));
+        }
+      }
       ixes.push(await buildRefreshReserveIx(CSSOL_RESERVE, CSSOL_RESERVE_ORACLE));
 
-      // refresh_reserve(WT) + refresh_obligation([csSOL]) — N-2 / N-1
-      // for the deposit ix that follows. The obligation only has csSOL
-      // at this point (WT will be added by the next ix).
+      // refresh_reserve(WT) + refresh_obligation(preDepositReserves)
+      // — N-2 / N-1 for the deposit ix below. preDepositReserves
+      // mirrors what's already on the obligation so klend's
+      // expected==actual check passes.
       ixes.push(await buildRefreshReserveIx(CSSOL_WT_RESERVE, CSSOL_RESERVE_ORACLE));
-      ixes.push(await buildRefreshObligationIx(owner, [CSSOL_RESERVE]));
+      ixes.push(await buildRefreshObligationIx(owner, preDepositReserves));
 
       // deposit X csSOL-WT into obligation as collateral
       ixes.push(await buildDepositLiquidityAndCollateralIx({
@@ -354,24 +400,30 @@ export default function OneStepUnwindTab() {
       // ReserveStale when iterating the obligation's deposits.
       ixes.push(await buildRefreshReserveIx(CSSOL_WT_RESERVE, CSSOL_RESERVE_ORACLE));
 
-      // refresh_reserve(csSOL) at N-2 + refresh_obligation([csSOL, WT])
-      // at N-1 for the withdraw ix. Obligation now holds both deposits.
+      // refresh_reserve(csSOL) at N-2 + refresh_obligation(post-deposit list)
+      // at N-1 for the withdraw ix. Obligation now holds preDepositReserves
+      // plus WT. Same-tx refreshes stay valid, so we only need
+      // refresh_reserve(csSOL) here as the positional N-2 placeholder.
       ixes.push(await buildRefreshReserveIx(CSSOL_RESERVE, CSSOL_RESERVE_ORACLE));
-      ixes.push(await buildRefreshObligationIx(owner, [CSSOL_RESERVE, CSSOL_WT_RESERVE]));
+      ixes.push(await buildRefreshObligationIx(owner, postDepositReserves));
 
-      // withdraw X csSOL collateral as liquidity (assumes 1:1 cToken↔liquidity at fresh exchange rate)
+      // withdraw X csSOL collateral as liquidity (assumes 1:1 cToken↔liquidity at fresh exchange rate).
+      // refreshObligationDeposits is what stays on the obligation AFTER
+      // this withdraw — i.e. postDepositReserves minus the reserve being
+      // partially withdrawn (csSOL). For partial withdraws, csSOL stays
+      // in the list (some collateral remains).
+      const remainingAfterWithdraw = postDepositReserves; // partial withdraw → csSOL still present
       ixes.push(await buildWithdrawCollateralAndRedeemIx({
         user: owner, reserve: CSSOL_RESERVE,
         liquidityMint: CSSOL_MINT, liquidityTokenProgram: TOKEN_2022_PROGRAM_ID,
         userDestinationLiquidity: userCssolAta, collateralAmount: lamports,
-        refreshObligationDeposits: [CSSOL_WT_RESERVE], // remaining deposit after withdraw
+        refreshObligationDeposits: remainingAfterWithdraw,
       }));
 
       // 13: governor::enqueue_withdraw_via_pool — burns the just-withdrawn csSOL,
       // mints fresh csSOL-WT to the user (which they'll use to repay the flash).
-      // (Reuse the existing build helper from cssolWt.ts.)
       const enqueueIx = await buildEnqueueWithdrawViaPoolIx({
-        user: owner, base: baseKp.publicKey, amount: lamports,
+        user: owner, base: basePubkey, amount: lamports,
         cssolWtMint: CSSOL_WT_MINT, vrtMint: CSSOL_VRT_MINT,
         vaultStakerWithdrawalTicket, vaultStakerWithdrawalTicketTokenAccount: ticketVrtAta,
         jitoVaultConfig: jitoConfig,
@@ -396,7 +448,8 @@ export default function OneStepUnwindTab() {
       setLog((l) => [...l, `tx assembled: ${ixes.length} ixes, ${serialized.length} bytes (limit 1232)`]);
       if (serialized.length > 1232) throw new Error(`tx too large: ${serialized.length} > 1232`);
 
-      vtx.sign([baseKp]);  // partial-sign with ephemeral base
+      // Single-signer now: user via wallet. Base is a governor PDA
+      // signed via invoke_signed inside the program.
       if (!wallet.signTransaction) throw new Error("wallet has no signTransaction");
       const signed = await wallet.signTransaction(vtx);
       setLog((l) => [...l, "submitting …"]);
@@ -431,17 +484,17 @@ export default function OneStepUnwindTab() {
         JITO_VAULT_PROGRAM,
       );
 
-      // Ticket PDA seeds (verified by string-grep on the Jito vault
-      // binary): [b"vault_staker_withdrawal_ticket", vault, base].
-      // Base is an ephemeral keypair generated per-call so each enqueue
-      // produces a unique ticket address (lets a user have multiple
-      // in-flight tickets simultaneously).
-      const baseKp = Keypair.generate();
+      // Ticket PDA seeds: [b"vault_staker_withdrawal_ticket", vault, base].
+      // `base` is a governor-derived PDA per (pool, queue.total_minted),
+      // signed via invoke_signed inside the program — no client-side
+      // ephemeral keypair, no extra wallet-signer slot.
+      if (!queue) throw new Error("queue not loaded yet — refresh and retry");
+      const basePubkey = withdrawBasePda(queue.totalCssolWtMinted);
       const [vaultStakerWithdrawalTicket] = PublicKey.findProgramAddressSync(
         [
           new TextEncoder().encode("vault_staker_withdrawal_ticket"),
           CSSOL_VAULT.toBuffer(),
-          baseKp.publicKey.toBuffer(),
+          basePubkey.toBuffer(),
         ],
         JITO_VAULT_PROGRAM,
       );
@@ -491,7 +544,7 @@ export default function OneStepUnwindTab() {
         ),
         await buildEnqueueWithdrawViaPoolIx({
           user: owner,
-          base: baseKp.publicKey,
+          base: basePubkey,
           amount: lamports,
           cssolWtMint: CSSOL_WT_MINT,
           vrtMint: CSSOL_VRT_MINT,
@@ -503,9 +556,9 @@ export default function OneStepUnwindTab() {
 
       const tx = new Transaction();
       ixes.forEach((ix) => tx.add(ix));
-      // Pass the ephemeral base keypair as an extra signer; user signs
-      // via the wallet (covers fee_payer + staker slots).
-      await send(tx, "enqueue unwind", [baseKp]);
+      // Single-signer flow now: user signs via the wallet, base is a
+      // governor PDA signed via invoke_signed inside the program.
+      await send(tx, "enqueue unwind");
       await refresh();
     } catch (e: any) {
       const onchainLogs = e?.transactionLogs ?? e?.logs ?? null;

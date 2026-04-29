@@ -62,8 +62,17 @@ interface KlendState {
   obligationHasDeposits: boolean;
   obligationElevationGroup: number;
   obligationCsSolCollateral: bigint;
+  // All non-zero deposit reserve addresses on the obligation. klend's
+  // refresh_obligation requires every active deposit reserve to be
+  // passed as a writable remaining account, otherwise it errors with
+  // InvalidAccountInput (6006) "expected_remaining_accounts=N,
+  // actual=M". After a leveraged-unwind, the obligation has both
+  // csSOL and csSOL-WT — passing only csSOL trips this guard.
+  obligationDepositReserves: PublicKey[];
 }
 
+const OBLIGATION_DEPOSIT_SLOT_SIZE = 136; // ObligationCollateral struct
+const OBLIGATION_DEPOSITS_OFFSET = 96;     // start of deposits[8] array
 const OBLIGATION_DEPOSIT0_RESERVE_OFFSET = 96;
 const OBLIGATION_DEPOSIT0_AMOUNT_OFFSET = 96 + 32;
 const OBLIGATION_ELEVATION_GROUP_OFFSET = 2285;
@@ -76,11 +85,21 @@ async function readKlendState(conn: ReturnType<typeof useConnection>["connection
   let obligationHasDeposits = false;
   let obligationElevationGroup = 0;
   let obligationCsSolCollateral = 0n;
+  let obligationDepositReserves: PublicKey[] = [];
   if (obligation && obligation.data.length >= OBLIGATION_ELEVATION_GROUP_OFFSET + 1) {
     const firstReserveBytes = obligation.data.subarray(OBLIGATION_DEPOSIT0_RESERVE_OFFSET, OBLIGATION_DEPOSIT0_RESERVE_OFFSET + 32);
     obligationHasDeposits = firstReserveBytes.some((b) => b !== 0);
     obligationElevationGroup = obligation.data[OBLIGATION_ELEVATION_GROUP_OFFSET];
     obligationCsSolCollateral = obligation.data.readBigUInt64LE(OBLIGATION_DEPOSIT0_AMOUNT_OFFSET);
+
+    // Walk all 8 deposit slots; collect non-zero reserve addresses.
+    for (let i = 0; i < 8; i++) {
+      const off = OBLIGATION_DEPOSITS_OFFSET + i * OBLIGATION_DEPOSIT_SLOT_SIZE;
+      const reserveBytes = obligation.data.subarray(off, off + 32);
+      if (reserveBytes.some((b) => b !== 0)) {
+        obligationDepositReserves.push(new PublicKey(reserveBytes));
+      }
+    }
   }
 
   return {
@@ -91,6 +110,7 @@ async function readKlendState(conn: ReturnType<typeof useConnection>["connection
     obligationHasDeposits,
     obligationElevationGroup,
     obligationCsSolCollateral,
+    obligationDepositReserves,
   };
 }
 
@@ -239,30 +259,50 @@ export default function OneStepDepositTab() {
       // remaining_accounts of refresh_obligation here mirror the deposit
       // slots that already exist on the obligation: empty for the first
       // deposit, [csSOL] thereafter.
+      // refresh_obligation must include EVERY non-zero deposit
+      // reserve on the obligation as a writable remaining account.
+      // After a leveraged-unwind the obligation has both csSOL and
+      // csSOL-WT — passing only csSOL trips InvalidAccountInput
+      // (6006) "expected_remaining_accounts=N, actual=M". For each
+      // extra reserve we also need an upstream refresh_reserve in the
+      // same slot.
+      const allDepositReserves = k.obligationDepositReserves;
+      for (const r of allDepositReserves) {
+        if (!r.equals(CSSOL_RESERVE)) {
+          // csSOL-WT (and any other future eMode-2 collateral) uses
+          // the same csSOL accrual oracle in v1, so passing
+          // CSSOL_RESERVE_ORACLE is correct for now. If a per-mint
+          // oracle is added in v2, parametrize this lookup.
+          ixes.push(await buildRefreshReserveIx(r, CSSOL_RESERVE_ORACLE));
+        }
+      }
       ixes.push(await buildRefreshReserveIx(CSSOL_RESERVE, CSSOL_RESERVE_ORACLE));
-      ixes.push(await buildRefreshObligationIx(
-        owner,
-        // After init_obligation in this same tx, hasDeposits is always
-        // false at this point. After a prior deposit, it's true.
-        k.obligationHasDeposits ? [CSSOL_RESERVE] : [],
-      ));
+      ixes.push(await buildRefreshObligationIx(owner, allDepositReserves));
       ixes.push(await buildDepositCsSolIx(owner, lamports));
 
-      // Elevation join — only when not yet in group 2 AND we know the
-      // deposit just made the obligation non-empty (so the
-      // ObligationDepositsEmpty=6020 guard passes). The post-deposit
-      // refresh_obligation must include csSOL as a writable remaining
-      // account.
+      // Elevation join — only when not yet in group 2 AND the
+      // obligation already has at least one deposit (the
+      // ObligationDepositsEmpty=6020 guard). After this ix's deposit
+      // lands, the obligation has csSOL plus whatever else was there;
+      // include all of them in the refresh_obligation.
       if (k.obligationElevationGroup !== ELEVATION_GROUP_LST_SOL) {
-        ixes.push(await buildRefreshObligationIx(owner, [CSSOL_RESERVE]));
-        ixes.push(await buildRequestElevationGroupIx(owner, ELEVATION_GROUP_LST_SOL, [CSSOL_RESERVE]));
+        const postDeposit = allDepositReserves.some((r) => r.equals(CSSOL_RESERVE))
+          ? allDepositReserves
+          : [...allDepositReserves, CSSOL_RESERVE];
+        ixes.push(await buildRefreshObligationIx(owner, postDeposit));
+        ixes.push(await buildRequestElevationGroupIx(owner, ELEVATION_GROUP_LST_SOL, postDeposit));
       }
 
       await sendV0(ixes, "1-sig deposit");
       await refresh();
     } catch (e: any) {
+      // Better error rendering: pull on-chain log tail if present and
+      // serialize structured InstructionError objects to JSON.
       const onchainLogs = e?.transactionLogs ?? e?.logs ?? null;
-      setError(`${e.message ?? e}${onchainLogs ? "\n\n" + onchainLogs.slice(-8).join("\n") : ""}`);
+      const baseMsg = typeof e === "string"
+        ? e
+        : e?.message ?? (e ? JSON.stringify(e, null, 2) : "unknown error");
+      setError(`${baseMsg}${onchainLogs ? "\n\n" + onchainLogs.slice(-10).join("\n") : ""}`);
     } finally {
       setBusy(false);
     }
