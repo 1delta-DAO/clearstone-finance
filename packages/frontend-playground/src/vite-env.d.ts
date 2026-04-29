@@ -20,6 +20,8 @@ interface ImportMetaEnv {
   readonly VITE_CSSOL_RESERVE_ORACLE?: string;
   readonly VITE_WSOL_RESERVE_ORACLE?: string;
   readonly VITE_DEPOSIT_LUT?: string;
+  readonly VITE_CSSOL_WT_MINT?: string;
+  readonly VITE_POOL_PENDING_WSOL_ACCOUNT?: string;
 }
 
 interface ImportMeta {

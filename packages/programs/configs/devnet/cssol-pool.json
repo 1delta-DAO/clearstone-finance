@@ -21,5 +21,7 @@
   "completedAt": "2026-04-27T09:57:25.341Z",
   "vault": "Hpdawr4ioFPqUMJYDxviWf4BRGdZAj3UgCdWemmhmoyx",
   "poolVrtAta": "BvBy8orQZPXFwR6fgyCkLoyZfK1TBRteG5g4ipuqrEZp",
-  "depositLut": "BYhbgSt3QKJp8mduKnjsHiy4EubxRYsU2xxZzpojEF7y"
+  "depositLut": "BYhbgSt3QKJp8mduKnjsHiy4EubxRYsU2xxZzpojEF7y",
+  "withdrawQueue": "EgWUrxvEmZj16BhhC2TGty4V1z76PcTcSPgZgCtGrs9J",
+  "poolPendingWsolAccount": "5CMXpXEfy8BTe4DzT9xhc36HXYGNf3wDrr5wV5aoJis1"
 }

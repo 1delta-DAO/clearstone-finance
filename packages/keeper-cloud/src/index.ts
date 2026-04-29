@@ -31,10 +31,29 @@ interface Env {
   ACCRUAL_CONFIG: string;
   ACCRUAL_ORACLE_PROGRAM: string;
   PYTH_PRICE_FEED: string; // 7UVi… on devnet
+
+  // ── Optional Jito Vault state-tracker cranker. When CSSOL_VAULT +
+  // JITO_VAULT_PROGRAM + JITO_VAULT_CONFIG are set, every cron fire
+  // also tries to Initialize+Close the vault's per-epoch state
+  // tracker so users don't need to run scripts/crank-vault-update.ts
+  // before each enqueue/mature. Idempotent: if the tracker for the
+  // current epoch already exists, init fails and we skip silently.
+  // Mature-pass for csSOL-WT tickets was removed when maturation
+  // became user-initiated (the user signs as Jito staker).
+  JITO_VAULT_PROGRAM?: string;
+  JITO_VAULT_CONFIG?: string;
+  CSSOL_VAULT?: string;
 }
 
 // First 8 bytes of sha256("global:refresh"), pre-computed.
 const DISC_REFRESH = Uint8Array.from([0xaa, 0x9b, 0x16, 0xfe, 0x93, 0xb5, 0x31, 0xa1]);
+
+// First 8 bytes of sha256("global:mature_withdrawal_tickets"). Computed
+// off-thread via the standard formula (anchor.fetch-discriminator pattern).
+async function disc(name: string): Promise<Uint8Array> {
+  const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`global:${name}`));
+  return new Uint8Array(h).slice(0, 8);
+}
 
 function loadKeypair(raw: string): Keypair {
   // Accept either the JSON array form Solana CLI writes (`[12,34,...,255]`)
@@ -147,24 +166,122 @@ async function runOnce(env: Env): Promise<{ sig: string; signer: string; balance
   return { sig, signer, balanceSol, sourcePrice };
 }
 
+// ── Jito Vault state-tracker cranker ──
+// Initializes + closes the per-epoch VaultUpdateStateTracker so the
+// vault stays "updated" and EnqueueWithdrawal/BurnWithdrawalTicket
+// don't reject with error 1020 ("Vault update is needed"). Idempotent:
+// if the tracker for the current epoch already exists, the
+// InitializeVaultUpdateStateTracker CPI fails and we skip closing.
+// On mainnet/devnet defaults the epoch is ~48h, so cranking once on
+// every 5-min cron fire is wasteful but safe; cheap enough to ignore.
+async function crankVaultUpdate(env: Env): Promise<{ tried: boolean; sigs: string[] }> {
+  if (!env.JITO_VAULT_PROGRAM || !env.JITO_VAULT_CONFIG || !env.CSSOL_VAULT) {
+    return { tried: false, sigs: [] };
+  }
+  const conn = new Connection(env.SOLANA_RPC_URL, "confirmed");
+  const payer = loadKeypair(env.DEPLOY_KEYPAIR_JSON);
+  const jitoProg = new PublicKey(env.JITO_VAULT_PROGRAM);
+  const config = new PublicKey(env.JITO_VAULT_CONFIG);
+  const vault = new PublicKey(env.CSSOL_VAULT);
+
+  // Compute current ncn_epoch from the vault's Config.epochLength.
+  const cfgInfo = await conn.getAccountInfo(config, "confirmed");
+  if (!cfgInfo) return { tried: false, sigs: [] };
+  const epochLength = cfgInfo.data.readBigUInt64LE(8 + 32 + 32);
+  const slot = await conn.getSlot("confirmed");
+  const ncnEpoch = BigInt(slot) / epochLength;
+
+  // Tracker PDA = ["vault_update_state_tracker", vault, ncn_epoch_le].
+  const ncnEpochBytes = Buffer.alloc(8);
+  ncnEpochBytes.writeBigUInt64LE(ncnEpoch);
+  const [tracker] = PublicKey.findProgramAddressSync(
+    [Buffer.from("vault_update_state_tracker"), vault.toBuffer(), ncnEpochBytes],
+    jitoProg,
+  );
+
+  // If tracker already exists for this epoch, skip — already cranked.
+  const existing = await conn.getAccountInfo(tracker, "confirmed");
+  if (existing) return { tried: false, sigs: [] };
+
+  const SYSTEM_PROGRAM = new PublicKey("11111111111111111111111111111111");
+  const sigs: string[] = [];
+
+  // Step 1: InitializeVaultUpdateStateTracker (disc=26, withdrawalAllocationMethod=0=Greedy)
+  const initIx = new TransactionInstruction({
+    programId: jitoProg,
+    keys: [
+      { pubkey: config, isSigner: false, isWritable: false },
+      { pubkey: vault, isSigner: false, isWritable: true },
+      { pubkey: tracker, isSigner: false, isWritable: true },
+      { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+      { pubkey: SYSTEM_PROGRAM, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.from([26, 0]),
+  });
+  // Step 2: CloseVaultUpdateStateTracker (disc=28, ncn_epoch as u64 LE).
+  const closeData = Buffer.alloc(1 + 8);
+  closeData[0] = 28;
+  closeData.writeBigUInt64LE(ncnEpoch, 1);
+  const closeIx = new TransactionInstruction({
+    programId: jitoProg,
+    keys: [
+      { pubkey: config, isSigner: false, isWritable: false },
+      { pubkey: vault, isSigner: false, isWritable: true },
+      { pubkey: tracker, isSigner: false, isWritable: true },
+      { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+    ],
+    data: closeData,
+  });
+
+  for (const [name, ix] of [["init", initIx], ["close", closeIx]] as const) {
+    try {
+      const { blockhash } = await conn.getLatestBlockhash("confirmed");
+      const tx = new Transaction({ feePayer: payer.publicKey, recentBlockhash: blockhash })
+        .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }))
+        .add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 200_000 }))
+        .add(ix);
+      tx.sign(payer);
+      const sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: true, maxRetries: 3 });
+      sigs.push(`${name}=${sig.slice(0, 12)}…`);
+    } catch (e) {
+      console.warn(`vault-update ${name} failed: ${(e as Error).message}`);
+      break; // if init failed, close will fail too
+    }
+  }
+  return { tried: true, sigs };
+}
+
 export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(
-      runOnce(env)
-        .then(({ sig, signer, balanceSol, sourcePrice }) => {
+      (async () => {
+        try {
+          const { sig, signer, balanceSol, sourcePrice } = await runOnce(env);
           const priceLog = Number.isFinite(sourcePrice) ? `SOL=$${sourcePrice.toFixed(4)} ` : "";
           console.log(`refresh submitted  ${priceLog}signer=${signer} balance=${balanceSol.toFixed(4)} sig=${sig}`);
-        })
-        .catch((e: Error) => {
-          console.error(`keeper failed: ${e.message}`);
-        }),
+        } catch (e) {
+          console.error(`oracle refresh failed: ${(e as Error).message}`);
+        }
+        try {
+          const c = await crankVaultUpdate(env);
+          if (c.tried) console.log(`vault-update crank: ${c.sigs.join(" ")}`);
+        } catch (e) {
+          console.error(`vault-update crank failed: ${(e as Error).message}`);
+        }
+      })(),
     );
   },
 
   async fetch(_req: Request, env: Env): Promise<Response> {
     try {
       const out = await runOnce(env);
-      return new Response(JSON.stringify({ ok: true, ...out }), {
+      let vaultCrank: { tried: boolean; sigs: string[] } = { tried: false, sigs: [] };
+      try {
+        vaultCrank = await crankVaultUpdate(env);
+      } catch (e) {
+        console.warn(`vault-update crank failed: ${(e as Error).message}`);
+      }
+      return new Response(JSON.stringify({ ok: true, ...out, vaultCrank }), {
         headers: { "content-type": "application/json" },
       });
     } catch (e) {

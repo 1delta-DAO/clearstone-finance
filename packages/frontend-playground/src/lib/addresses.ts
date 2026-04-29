@@ -75,3 +75,12 @@ export const ELEVATION_GROUP_LST_SOL = 2;
 // isn't set yet.
 const _depositLut = import.meta.env.VITE_DEPOSIT_LUT;
 export const DEPOSIT_LUT: PublicKey | null = _depositLut ? new PublicKey(_depositLut) : null;
+
+// csSOL-WT (withdraw ticket) addresses — populated by
+// scripts/setup-cssol-wt-mint.ts and scripts/init-pool-pending-wsol.ts.
+// Optional: the unwind tab disables itself if either is missing.
+const _cssolWtMint = import.meta.env.VITE_CSSOL_WT_MINT;
+export const CSSOL_WT_MINT: PublicKey | null = _cssolWtMint ? new PublicKey(_cssolWtMint) : null;
+
+const _poolPendingWsol = import.meta.env.VITE_POOL_PENDING_WSOL_ACCOUNT;
+export const POOL_PENDING_WSOL_ACCOUNT: PublicKey | null = _poolPendingWsol ? new PublicKey(_poolPendingWsol) : null;

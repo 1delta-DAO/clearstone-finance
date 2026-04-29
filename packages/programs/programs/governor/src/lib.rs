@@ -22,12 +22,18 @@ const JITO_VAULT_ENQUEUE_WITHDRAWAL_DISC: u8 = 12;
 const JITO_VAULT_BURN_WITHDRAWAL_TICKET_DISC: u8 = 14;
 
 /// Maximum number of in-flight Jito withdrawal tickets queued by the pool
-/// at any time. Bounded for account-size sanity. If hit, additional
-/// `enqueue_withdraw_via_pool` calls fail until matured tickets are reaped
-/// via `mature_withdrawal_tickets` (which decrements the live count by
-/// marking entries `redeemed = true` and never reuses slots — fresh entries
-/// always replace the lowest-index redeemed slot).
-pub const MAX_WITHDRAW_QUEUE_TICKETS: usize = 32;
+/// at any time. Per-pool, not per-user (with the ephemeral-base-keypair
+/// pattern, a single user can spawn arbitrarily many tickets).
+///
+/// Capped at 120: total account size = 69 bytes overhead + 81 bytes/ticket
+/// × 120 = 9789 bytes, comfortably under Solana's 10240-byte
+/// `MAX_PERMITTED_DATA_INCREASE` cap that applies to Anchor's init flow.
+/// To go higher, add a chunked `grow_withdraw_queue` ix that reallocs in
+/// 10240-byte increments — deferred to v2.
+///
+/// If hit, `enqueue_withdraw_via_pool` rejects until matured tickets are
+/// reaped via `mature_withdrawal_tickets`.
+pub const MAX_WITHDRAW_QUEUE_TICKETS: usize = 120;
 
 #[program]
 pub mod governor {
@@ -778,8 +784,119 @@ pub mod governor {
     // csSOL-WT (withdraw ticket) flow — enqueue / mature / redeem
     // -----------------------------------------------------------------
 
+    /// Pool-authority-only: register a Jito withdrawal ticket that
+    /// already exists on-chain but is missing from the queue. Used to
+    /// recover tickets stranded by layout migrations or by an early
+    /// failure-then-success sequence where the ticket got created but
+    /// the queue write didn't (e.g. partial-success orphans across our
+    /// own program upgrades).
+    ///
+    /// The on-chain ticket account must:
+    ///   - exist and be owned by the Jito Vault program
+    ///   - have its `staker` field equal to the `staker` arg passed in
+    ///   - have its `vault` field equal to the pool's csSOL Jito vault
+    ///
+    /// Validation lives in this ix (we read the raw bytes); we do NOT
+    /// require the queue to deserialize correctly so this works after
+    /// arbitrary layout changes.
+    pub fn import_orphan_ticket(
+        ctx: Context<ImportOrphanTicket>,
+        staker: Pubkey,
+        cssol_wt_amount: u64,
+    ) -> Result<()> {
+        // Read the Jito ticket bytes directly: discriminator(8) +
+        // vault(32) + staker(32) + base(32) + vrt_amount(u64=8) +
+        // slot_unstaked(u64=8) + ...
+        let ticket_ai = &ctx.accounts.vault_staker_withdrawal_ticket;
+        require_keys_eq!(
+            *ticket_ai.owner,
+            JITO_VAULT_PROGRAM_ID,
+            GovernorError::Unauthorized
+        );
+        let data = ticket_ai.try_borrow_data()?;
+        require!(data.len() >= 120, GovernorError::TicketNotFound);
+        let onchain_vault = Pubkey::try_from(&data[8..40]).unwrap();
+        let onchain_staker = Pubkey::try_from(&data[40..72]).unwrap();
+        let slot_unstaked = u64::from_le_bytes(data[112..120].try_into().unwrap());
+        drop(data);
+
+        // The Jito ticket must belong to the right vault + the staker arg.
+        require_keys_eq!(
+            onchain_vault,
+            ctx.accounts.jito_vault.key(),
+            GovernorError::ReserveMismatch
+        );
+        require_keys_eq!(onchain_staker, staker, GovernorError::Unauthorized);
+
+        // Reject duplicates.
+        let queue = &mut ctx.accounts.withdraw_queue;
+        let already = queue.tickets.iter().any(|t| t.ticket_pda == ticket_ai.key());
+        require!(!already, GovernorError::WithdrawQueueFull);
+
+        let live_count = queue.tickets.iter().filter(|t| !t.redeemed).count();
+        require!(
+            live_count < MAX_WITHDRAW_QUEUE_TICKETS,
+            GovernorError::WithdrawQueueFull
+        );
+
+        queue.tickets.push(WithdrawTicket {
+            ticket_pda: ticket_ai.key(),
+            staker,
+            cssol_wt_amount,
+            created_at_slot: slot_unstaked,
+            redeemed: false,
+        });
+        queue.total_cssol_wt_minted = queue.total_cssol_wt_minted.saturating_add(cssol_wt_amount);
+
+        msg!(
+            "Imported orphan ticket {} (staker={}, amount={}, slot_unstaked={})",
+            ticket_ai.key(),
+            staker,
+            cssol_wt_amount,
+            slot_unstaked,
+        );
+        Ok(())
+    }
+
+    /// Pool-authority-only: closes the WithdrawQueue PDA and refunds
+    /// rent to the authority. Required when the layout changes (we
+    /// added `staker: Pubkey` to WithdrawTicket post-v1) — Anchor's
+    /// strict `Account<WithdrawQueue>` would refuse to deserialize the
+    /// old-layout account, so we use UncheckedAccount + verify the PDA
+    /// derivation ourselves. Re-run `init_withdraw_queue` afterwards.
+    pub fn close_withdraw_queue(ctx: Context<CloseWithdrawQueue>) -> Result<()> {
+        let pool_key = ctx.accounts.pool_config.key();
+        let (expected, _bump) = Pubkey::find_program_address(
+            &[b"withdraw_queue", pool_key.as_ref()],
+            &crate::ID,
+        );
+        require_keys_eq!(
+            ctx.accounts.withdraw_queue.key(),
+            expected,
+            GovernorError::Unauthorized
+        );
+        require!(
+            ctx.accounts.withdraw_queue.owner == &crate::ID,
+            GovernorError::Unauthorized
+        );
+
+        // Drain lamports → authority and zero out the data, then
+        // re-assign to the system program so a future
+        // `init_withdraw_queue` can re-create the account fresh.
+        let queue_ai = ctx.accounts.withdraw_queue.to_account_info();
+        let auth_ai = ctx.accounts.authority.to_account_info();
+
+        let lamports = queue_ai.lamports();
+        **queue_ai.try_borrow_mut_lamports()? = 0;
+        **auth_ai.try_borrow_mut_lamports()? = auth_ai.lamports().checked_add(lamports).unwrap();
+
+        queue_ai.assign(&anchor_lang::solana_program::system_program::ID);
+        queue_ai.resize(0)?;
+        Ok(())
+    }
+
     /// One-shot init of the per-pool `WithdrawQueue` PDA. Holds a bounded
-    /// list of `{ticket_pda, csSOL_WT_amount, created_at_slot}` records,
+    /// list of `{ticket_pda, staker, cssol_wt_amount, created_at_slot}` records,
     /// plus a counter of pending wSOL backing already in the pool's
     /// `pending_wsol_pool` ATA but not yet redeemed.
     pub fn init_withdraw_queue(ctx: Context<InitWithdrawQueue>) -> Result<()> {
@@ -854,10 +971,43 @@ pub mod governor {
             amount,
         )?;
 
-        // 2. Jito EnqueueWithdrawal — pool PDA stands in as
-        //    `staker` + `base` + `burn_signer`. Account ordering matches
-        //    @jito-foundation/vault-sdk getEnqueueWithdrawalInstruction.
-        //    Args: u8 disc | u64 amount.
+        // 2. Move X VRT from POOL_VRT_ATA → user's VRT ATA. Pool PDA
+        //    signs as the source authority. This puts the VRT under the
+        //    user's wallet *transiently* — long enough for the next CPI
+        //    (Jito EnqueueWithdrawal) to consume it, where the user is
+        //    the staker.
+        //    Why we can't keep VRT in pool custody and use pool_pda as
+        //    the staker: Jito's EnqueueWithdrawal funds the new ticket
+        //    PDA's rent via system_program::transfer(from=staker, ...),
+        //    which requires `from` to be system-owned (no data). pool_pda
+        //    is an Anchor-managed PoolConfig account with data → fails.
+        //    User wallets are system-owned → works.
+        token_interface::transfer_checked(
+            CpiContext::new_with_signer(
+                ctx.accounts.spl_token_program.to_account_info(),
+                token_interface::TransferChecked {
+                    from: ctx.accounts.pool_vrt_token_account.to_account_info(),
+                    mint: ctx.accounts.vrt_mint.to_account_info(),
+                    to: ctx.accounts.user_vrt_token_account.to_account_info(),
+                    authority: ctx.accounts.pool_config.to_account_info(),
+                },
+                &[pool_seeds],
+            ),
+            amount,
+            ctx.accounts.pool_config.decimals, // VRT mint decimals = underlying decimals (9)
+        )?;
+
+        // 3. Jito EnqueueWithdrawal — split-signer setup:
+        //    - staker = base = user (system-owned, funds the ticket
+        //      PDA's rent via system_program::transfer; ticket is
+        //      derived from base = user, so each user gets their own
+        //      ticket PDA address space).
+        //    - burn_signer = pool_pda (the vault's mint_burn_admin set
+        //      at init, gates VRT-burning operations; signed via PDA
+        //      seeds in invoke_signed).
+        //    Together: user signs the outer governor ix (giving us
+        //    user-signed staker+base), invoke_signed adds the pool PDA
+        //    signature for burn_signer.
         let mut data = Vec::with_capacity(1 + 8);
         data.push(JITO_VAULT_ENQUEUE_WITHDRAWAL_DISC);
         data.extend_from_slice(&amount.to_le_bytes());
@@ -867,12 +1017,12 @@ pub mod governor {
             AccountMeta::new(ctx.accounts.jito_vault.key(), false),
             AccountMeta::new(ctx.accounts.vault_staker_withdrawal_ticket.key(), false),
             AccountMeta::new(ctx.accounts.vault_staker_withdrawal_ticket_token_account.key(), false),
-            AccountMeta::new(ctx.accounts.pool_config.key(), true), // staker (signer)
-            AccountMeta::new(ctx.accounts.pool_vrt_token_account.key(), false), // staker_vrt_token_account (W)
-            AccountMeta::new_readonly(ctx.accounts.pool_config.key(), true),    // base (signer)
+            AccountMeta::new(ctx.accounts.user.key(), true),                 // staker (W, signer = user)
+            AccountMeta::new(ctx.accounts.user_vrt_token_account.key(), false), // staker_vrt_token_account (W)
+            AccountMeta::new_readonly(ctx.accounts.base.key(), true),        // base (RO, signer = ephemeral keypair)
             AccountMeta::new_readonly(ctx.accounts.spl_token_program.key(), false),
             AccountMeta::new_readonly(ctx.accounts.system_program.key(), false),
-            AccountMeta::new_readonly(ctx.accounts.pool_config.key(), true),    // burn_signer (signer)
+            AccountMeta::new_readonly(ctx.accounts.pool_config.key(), true), // burn_signer (RO, signer = pool_pda)
         ];
 
         let ix = Instruction {
@@ -889,12 +1039,14 @@ pub mod governor {
                 ctx.accounts.jito_vault.to_account_info(),
                 ctx.accounts.vault_staker_withdrawal_ticket.to_account_info(),
                 ctx.accounts.vault_staker_withdrawal_ticket_token_account.to_account_info(),
-                ctx.accounts.pool_config.to_account_info(),
-                ctx.accounts.pool_vrt_token_account.to_account_info(),
+                ctx.accounts.user.to_account_info(),
+                ctx.accounts.user_vrt_token_account.to_account_info(),
+                ctx.accounts.base.to_account_info(),
                 ctx.accounts.spl_token_program.to_account_info(),
                 ctx.accounts.system_program.to_account_info(),
+                ctx.accounts.pool_config.to_account_info(),
             ],
-            &[pool_seeds],
+            &[pool_seeds], // signs as burn_signer = pool_pda
         )?;
 
         // 3. Mint X csSOL-WT to user via delta-mint CPI. The pool PDA
@@ -923,10 +1075,12 @@ pub mod governor {
         //    cleaned up on `mature_withdrawal_tickets` by truncating the
         //    leading run of redeemed entries).
         let ticket_pda = ctx.accounts.vault_staker_withdrawal_ticket.key();
+        let staker = ctx.accounts.user.key();
         let now_slot = Clock::get()?.slot;
         let queue = &mut ctx.accounts.withdraw_queue;
         queue.tickets.push(WithdrawTicket {
             ticket_pda,
+            staker,
             cssol_wt_amount: amount,
             created_at_slot: now_slot,
             redeemed: false,
@@ -962,33 +1116,42 @@ pub mod governor {
         let bump = ctx.accounts.pool_config.bump;
         let pool_seeds: &[&[u8]] = &[b"pool".as_ref(), underlying.as_ref(), &[bump]];
 
-        // Verify the ticket is actually one of ours (in the queue) and
-        // not yet redeemed. We do NOT check the unlock window here — the
-        // Jito vault enforces that and will fail the CPI if too early.
+        // Verify the ticket is in the queue, not yet redeemed, AND owned
+        // by the calling user (matches Jito's own ticket.staker check —
+        // error 1042 — but enforced earlier here so users get a clear
+        // governor-side error if they try to crank someone else's ticket).
         let ticket_key = ctx.accounts.vault_staker_withdrawal_ticket.key();
+        let user_key = ctx.accounts.user.key();
         let queue = &mut ctx.accounts.withdraw_queue;
         let entry_idx = queue
             .tickets
             .iter()
             .position(|t| t.ticket_pda == ticket_key && !t.redeemed)
             .ok_or(GovernorError::TicketNotFound)?;
+        require!(
+            queue.tickets[entry_idx].staker == user_key,
+            GovernorError::Unauthorized
+        );
         let cssol_wt_amount = queue.tickets[entry_idx].cssol_wt_amount;
 
-        // CPI BurnWithdrawalTicket. Args: just the u8 disc.
+        // 1. CPI BurnWithdrawalTicket — user is staker (matches the
+        //    on-chain ticket.staker), pool PDA is burn_signer (matches
+        //    vault.mint_burn_admin). wSOL flows from Jito vault to the
+        //    user's wSOL ATA.
         let metas = vec![
             AccountMeta::new_readonly(ctx.accounts.jito_vault_config.key(), false),
             AccountMeta::new(ctx.accounts.jito_vault.key(), false),
             AccountMeta::new(ctx.accounts.vault_st_token_account.key(), false), // vault_token_account
             AccountMeta::new(ctx.accounts.vrt_mint.key(), false),
-            AccountMeta::new(ctx.accounts.pool_config.key(), false), // staker (NOT signer here per IDL)
-            AccountMeta::new(ctx.accounts.pool_pending_wsol_ata.key(), false), // staker_token_account = receives wSOL
+            AccountMeta::new(ctx.accounts.user.key(), false),                   // staker (NOT signer per IDL — but address must match ticket.staker)
+            AccountMeta::new(ctx.accounts.user_wsol_ata.key(), false),          // staker_token_account = where wSOL lands
             AccountMeta::new(ctx.accounts.vault_staker_withdrawal_ticket.key(), false),
             AccountMeta::new(ctx.accounts.vault_staker_withdrawal_ticket_token_account.key(), false),
             AccountMeta::new(ctx.accounts.vault_fee_token_account.key(), false),
             AccountMeta::new(ctx.accounts.program_fee_token_account.key(), false),
             AccountMeta::new_readonly(ctx.accounts.spl_token_program.key(), false),
             AccountMeta::new_readonly(ctx.accounts.system_program.key(), false),
-            AccountMeta::new_readonly(ctx.accounts.pool_config.key(), true), // burn_signer (signer)
+            AccountMeta::new_readonly(ctx.accounts.pool_config.key(), true),    // burn_signer (signer = pool PDA)
         ];
 
         let ix = Instruction {
@@ -1005,19 +1168,40 @@ pub mod governor {
                 ctx.accounts.jito_vault.to_account_info(),
                 ctx.accounts.vault_st_token_account.to_account_info(),
                 ctx.accounts.vrt_mint.to_account_info(),
-                ctx.accounts.pool_config.to_account_info(),
-                ctx.accounts.pool_pending_wsol_ata.to_account_info(),
+                ctx.accounts.user.to_account_info(),
+                ctx.accounts.user_wsol_ata.to_account_info(),
                 ctx.accounts.vault_staker_withdrawal_ticket.to_account_info(),
                 ctx.accounts.vault_staker_withdrawal_ticket_token_account.to_account_info(),
                 ctx.accounts.vault_fee_token_account.to_account_info(),
                 ctx.accounts.program_fee_token_account.to_account_info(),
                 ctx.accounts.spl_token_program.to_account_info(),
                 ctx.accounts.system_program.to_account_info(),
+                ctx.accounts.pool_config.to_account_info(),
             ],
             &[pool_seeds],
         )?;
 
-        // 2. Mark the entry redeemed + bump pending_wsol.
+        // 2. Sweep the freshly-received wSOL from user's wSOL ATA into
+        //    the pool's pending pool. User signs as authority (covered
+        //    by the outer ix's user signature). Net effect: from the
+        //    user's wallet view, the wSOL just transits — they get the
+        //    1:1 redemption later via `redeem_cssol_wt` against the same
+        //    pool.
+        token_interface::transfer_checked(
+            CpiContext::new(
+                ctx.accounts.spl_token_program.to_account_info(),
+                token_interface::TransferChecked {
+                    from: ctx.accounts.user_wsol_ata.to_account_info(),
+                    mint: ctx.accounts.wsol_mint.to_account_info(),
+                    to: ctx.accounts.pool_pending_wsol_ata.to_account_info(),
+                    authority: ctx.accounts.user.to_account_info(),
+                },
+            ),
+            cssol_wt_amount,
+            ctx.accounts.pool_config.decimals,
+        )?;
+
+        // 3. Mark the entry redeemed + bump pending_wsol.
         queue.tickets[entry_idx].redeemed = true;
         queue.pending_wsol = queue.pending_wsol.saturating_add(cssol_wt_amount);
 
@@ -1853,14 +2037,21 @@ pub struct WithdrawQueue {
 impl WithdrawQueue {
     /// 32 (pool_config) + 8 (pending_wsol) + 8 (minted) + 8 (redeemed)
     ///   + 4 (Vec len prefix) + N * sizeof(WithdrawTicket) + 1 (bump)
-    /// WithdrawTicket = 32 + 8 + 8 + 1 = 49.
-    pub const INIT_SPACE: usize = 32 + 8 + 8 + 8 + 4 + (MAX_WITHDRAW_QUEUE_TICKETS * 49) + 1;
+    /// WithdrawTicket = 32 + 32 + 8 + 8 + 1 = 81.
+    pub const INIT_SPACE: usize = 32 + 8 + 8 + 8 + 4 + (MAX_WITHDRAW_QUEUE_TICKETS * 81) + 1;
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct WithdrawTicket {
     /// The Jito Vault `VaultStakerWithdrawalTicket` PDA we own.
     pub ticket_pda: Pubkey,
+    /// The user who originally enqueued this ticket and is the
+    /// `base` + `staker` of the underlying Jito ticket. Required for
+    /// `mature_withdrawal_tickets` to satisfy Jito's check
+    /// `ticket.staker == provided_staker` (error 1042). Also lets the
+    /// playground UI filter "your tickets" without a per-ticket
+    /// extra RPC fetch.
+    pub staker: Pubkey,
     /// csSOL-WT minted to the requester at enqueue-time. wSOL payout
     /// after Jito unlock will land 1:1 against this (less any vault
     /// fees, which Jito takes inside its own ix and we do not
@@ -1905,6 +2096,55 @@ pub struct RedeemCsSolWtEvent {
 // ---------------------------------------------------------------------------
 
 #[derive(Accounts)]
+pub struct ImportOrphanTicket<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        seeds = [b"pool", pool_config.underlying_mint.as_ref()],
+        bump = pool_config.bump,
+        has_one = authority,
+    )]
+    pub pool_config: Account<'info, PoolConfig>,
+
+    #[account(
+        mut,
+        seeds = [b"withdraw_queue", pool_config.key().as_ref()],
+        bump = withdraw_queue.bump,
+        has_one = pool_config,
+    )]
+    pub withdraw_queue: Account<'info, WithdrawQueue>,
+
+    /// CHECK: csSOL Jito vault — used to verify the orphan's vault.
+    pub jito_vault: UncheckedAccount<'info>,
+
+    /// CHECK: orphan ticket PDA on the Jito Vault program. Validated
+    /// inside the ix (owner must equal Jito Vault, vault field must
+    /// match `jito_vault`, staker field must match the `staker` arg).
+    pub vault_staker_withdrawal_ticket: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
+pub struct CloseWithdrawQueue<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        seeds = [b"pool", pool_config.underlying_mint.as_ref()],
+        bump = pool_config.bump,
+        has_one = authority,
+    )]
+    pub pool_config: Account<'info, PoolConfig>,
+
+    /// CHECK: validated inside the ix via PDA derivation against the
+    /// pool config; we use UncheckedAccount so old-layout queues can
+    /// still be closed (the old data won't deserialize against the
+    /// new WithdrawQueue layout).
+    #[account(mut)]
+    pub withdraw_queue: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
 pub struct InitWithdrawQueue<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
@@ -1934,6 +2174,14 @@ pub struct EnqueueWithdrawViaPool<'info> {
     /// rent + the Solana base fee; signs the Token-2022 burn for csSOL.
     #[account(mut)]
     pub user: Signer<'info>,
+
+    /// Ephemeral keypair the client generates for *this* enqueue. Used
+    /// as Jito's `base` for the ticket PDA so each enqueue produces a
+    /// unique ticket address (so the user isn't blocked from a second
+    /// enqueue while their first ticket is still locked). Not stored
+    /// anywhere — once the ticket exists, the client can discard the
+    /// keypair; only the ticket_pda matters going forward.
+    pub base: Signer<'info>,
 
     #[account(
         mut,
@@ -1974,9 +2222,19 @@ pub struct EnqueueWithdrawViaPool<'info> {
     /// CHECK: ticket-owned VRT ATA — created by the Jito CPI.
     #[account(mut)]
     pub vault_staker_withdrawal_ticket_token_account: UncheckedAccount<'info>,
-    /// CHECK: pool's VRT ATA — VRT is burned here at enqueue-time.
+    /// CHECK: pool's VRT ATA — source of VRT moved transiently to user
+    /// before the Jito EnqueueWithdrawal CPI. Pool PDA is the authority.
     #[account(mut)]
     pub pool_vrt_token_account: UncheckedAccount<'info>,
+
+    /// CHECK: VRT mint — needed for transfer_checked decimals validation
+    /// when moving VRT pool→user.
+    pub vrt_mint: UncheckedAccount<'info>,
+
+    /// CHECK: user's VRT ATA — VRT lands here transiently from pool, then
+    /// is consumed by the Jito EnqueueWithdrawal CPI within the same ix.
+    #[account(mut)]
+    pub user_vrt_token_account: UncheckedAccount<'info>,
 
     /// CHECK: Jito Vault program ID.
     #[account(address = JITO_VAULT_PROGRAM_ID)]
@@ -2013,9 +2271,15 @@ pub struct EnqueueWithdrawViaPool<'info> {
 
 #[derive(Accounts)]
 pub struct MatureWithdrawalTicket<'info> {
-    /// Anyone can crank this — pays only Solana base fee.
+    /// The original ticket creator. Must match the staker recorded in
+    /// the queue entry AND in the underlying Jito ticket. Pays the
+    /// base fee. Maturation is therefore NOT permissionless — only
+    /// the user who enqueued can mature their own ticket. This is a
+    /// requirement of Jito's `ticket.staker == provided_staker` check
+    /// and a correctness requirement of our pool accounting (we sweep
+    /// the matured wSOL through this user's wSOL ATA).
     #[account(mut)]
-    pub cranker: Signer<'info>,
+    pub user: Signer<'info>,
 
     #[account(
         seeds = [b"pool", pool_config.underlying_mint.as_ref()],
@@ -2043,9 +2307,16 @@ pub struct MatureWithdrawalTicket<'info> {
     /// CHECK: VRT mint.
     #[account(mut)]
     pub vrt_mint: UncheckedAccount<'info>,
-    /// CHECK: pool's pending-wSOL ATA — this is where matured wSOL
-    /// accumulates before users redeem against it. Pre-created at
-    /// ATA(NATIVE_MINT, pool_config_pda, off_curve=true).
+    /// CHECK: NATIVE_MINT (wSOL) — needed for transfer_checked.
+    pub wsol_mint: UncheckedAccount<'info>,
+    /// CHECK: user's wSOL ATA — Jito BurnWithdrawalTicket sends wSOL
+    /// here first, then we sweep it into pool_pending_wsol_ata
+    /// inside the same ix.
+    #[account(mut)]
+    pub user_wsol_ata: UncheckedAccount<'info>,
+    /// CHECK: pool's pending-wSOL ATA — final destination of the wSOL
+    /// after the same-ix sweep. Used by `redeem_cssol_wt` as the
+    /// payout source.
     #[account(mut)]
     pub pool_pending_wsol_ata: UncheckedAccount<'info>,
     /// CHECK: ticket PDA being burned.
@@ -2065,8 +2336,8 @@ pub struct MatureWithdrawalTicket<'info> {
     #[account(address = JITO_VAULT_PROGRAM_ID)]
     pub jito_vault_program: UncheckedAccount<'info>,
 
-    /// CHECK: SPL Token program.
-    pub spl_token_program: UncheckedAccount<'info>,
+    /// CHECK: SPL Token program (regular Token, not Token-2022 — wSOL is SPL Token).
+    pub spl_token_program: Interface<'info, token_interface::TokenInterface>,
     pub system_program: Program<'info, System>,
 }
 
