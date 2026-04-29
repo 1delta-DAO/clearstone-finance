@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import {
+  AddressLookupTableAccount,
   ComputeBudgetProgram,
   Keypair,
   LAMPORTS_PER_SOL,
   PublicKey,
+  SystemProgram,
   Transaction,
   TransactionInstruction,
+  TransactionMessage,
+  VersionedTransaction,
 } from "@solana/web3.js";
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -19,13 +23,26 @@ import {
 
 import {
   CSSOL_MINT,
+  CSSOL_RESERVE,
+  CSSOL_RESERVE_ORACLE,
   CSSOL_VAULT,
+  CSSOL_VAULT_ST_TOKEN_ACCOUNT,
   CSSOL_VRT_MINT,
   CSSOL_WT_MINT,
+  CSSOL_WT_RESERVE,
+  DEPOSIT_LUT,
   JITO_VAULT_PROGRAM,
   POOL_PENDING_WSOL_ACCOUNT,
   POOL_PDA,
 } from "../lib/addresses";
+import {
+  buildDepositLiquidityAndCollateralIx,
+  buildFlashBorrowIx,
+  buildFlashRepayIx,
+  buildRefreshObligationIx,
+  buildRefreshReserveIx,
+  buildWithdrawCollateralAndRedeemIx,
+} from "../lib/klend";
 import {
   buildEnqueueWithdrawViaPoolIx,
   buildMatureWithdrawalTicketsIx,
@@ -196,6 +213,208 @@ export default function OneStepUnwindTab() {
     }
     setLog((l) => [...l, `✓ confirmed ${label}`]);
     return sig;
+  }
+
+  // Cache LUT once for the leveraged unwind path.
+  const [lutAccount, setLutAccount] = useState<AddressLookupTableAccount | null>(null);
+  useEffect(() => {
+    if (!DEPOSIT_LUT) return;
+    let cancelled = false;
+    void connection.getAddressLookupTable(DEPOSIT_LUT, { commitment: "confirmed" })
+      .then((r) => { if (!cancelled) setLutAccount(r.value ?? null); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [connection]);
+
+  /**
+   * Single-signature leveraged-position unwind via klend flash-loan.
+   *
+   * Flow (one atomic tx, fits with the deposit LUT):
+   *   1. flashBorrow(WT_RESERVE, X) → user_cssol_wt_ata gets X tokens (loan)
+   *   2. refresh_reserve(WT) + refresh_reserve(csSOL)
+   *   3. refresh_obligation([csSOL])  // pre-deposit state
+   *   4. deposit_reserve_liquidity_and_obligation_collateral(WT, X)
+   *      → cTokens minted into obligation (LTV improves: csSOL + WT both back the borrow)
+   *   5. refresh_reserve(csSOL) + refresh_obligation([csSOL, WT])
+   *   6. withdraw_obligation_collateral_and_redeem_reserve_collateral(csSOL, X)
+   *      → X cTokens redeemed back to X csSOL liquidity in user's csSOL ATA
+   *   7. governor::enqueue_withdraw_via_pool(X)
+   *      → burns X csSOL, mints X csSOL-WT, queues VRT in Jito ticket
+   *   8. flashRepay(WT_RESERVE, X, borrow_ix_idx=N)
+   *      → repays the flash loan with the freshly-minted csSOL-WT
+   *
+   * Net effect: csSOL collateral atomically swapped for csSOL-WT
+   * collateral; user's wSOL borrow position untouched throughout (LTV
+   * preserved within eMode 2). Zero price impact (no AMM), zero fees
+   * (flashLoanFee=0, verified on-chain).
+   */
+  async function leveragedUnwind() {
+    if (!wallet.publicKey || !CSSOL_WT_MINT || !CSSOL_WT_RESERVE || !DEPOSIT_LUT) return;
+    if (!lutAccount) { setError("LUT not loaded"); return; }
+    setBusy(true); setError(null);
+    setLog([`assembling leveraged-unwind for ${amount} csSOL …`]);
+    try {
+      const owner = wallet.publicKey;
+      const lamports = BigInt(Math.round(Number(amount) * LAMPORTS_PER_SOL));
+      if (lamports <= 0n) throw new Error("amount must be > 0");
+
+      const [jitoConfig] = PublicKey.findProgramAddressSync(
+        [new TextEncoder().encode("config")], JITO_VAULT_PROGRAM,
+      );
+
+      // Per-call Jito base keypair; user owns the ticket.
+      const baseKp = Keypair.generate();
+      const [vaultStakerWithdrawalTicket] = PublicKey.findProgramAddressSync(
+        [
+          new TextEncoder().encode("vault_staker_withdrawal_ticket"),
+          CSSOL_VAULT.toBuffer(), baseKp.publicKey.toBuffer(),
+        ],
+        JITO_VAULT_PROGRAM,
+      );
+      const ticketVrtAta = getAssociatedTokenAddressSync(
+        CSSOL_VRT_MINT, vaultStakerWithdrawalTicket, true,
+        TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
+      );
+
+      // ATAs we need pre-existing.
+      const userCssolAta = getAssociatedTokenAddressSync(
+        CSSOL_MINT, owner, false, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
+      );
+      const userCssolWtAta = getAssociatedTokenAddressSync(
+        CSSOL_WT_MINT, owner, false, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
+      );
+      const userVrtAta = getAssociatedTokenAddressSync(
+        CSSOL_VRT_MINT, owner, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
+      );
+
+      // Where in the outer ix list will flashBorrow sit? Indexes are
+      // 0-based and DO count ATA-create + ComputeBudget ixes. We'll
+      // assemble first, then fill in the borrow_ix_idx for flashRepay
+      // based on actual position.
+      const ixes: TransactionInstruction[] = [];
+
+      // 0-1: compute budget (high — flash + 2 deposits + withdraw + governor + flash_repay)
+      ixes.push(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }));
+      ixes.push(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 10_000 }));
+
+      // 2-5: idempotent ATA creates (some may already exist)
+      ixes.push(createAssociatedTokenAccountIdempotentInstruction(
+        owner, userCssolAta, owner, CSSOL_MINT,
+        TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
+      ));
+      ixes.push(createAssociatedTokenAccountIdempotentInstruction(
+        owner, userCssolWtAta, owner, CSSOL_WT_MINT,
+        TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
+      ));
+      ixes.push(createAssociatedTokenAccountIdempotentInstruction(
+        owner, userVrtAta, owner, CSSOL_VRT_MINT,
+        TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
+      ));
+      ixes.push(createAssociatedTokenAccountIdempotentInstruction(
+        owner, ticketVrtAta, vaultStakerWithdrawalTicket, CSSOL_VRT_MINT,
+        TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
+      ));
+
+      // 6: flash_borrow csSOL-WT — record this position for flash_repay's borrow_ix_idx.
+      const borrowIxIdx = ixes.length;
+      const wtLiqSupply = PublicKey.findProgramAddressSync(
+        [new TextEncoder().encode("reserve_liq_supply"), CSSOL_WT_RESERVE.toBuffer()],
+        new PublicKey("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD"),
+      )[0];
+      ixes.push(await buildFlashBorrowIx({
+        user: owner, reserve: CSSOL_WT_RESERVE, liquidityMint: CSSOL_WT_MINT,
+        reserveSourceLiquidity: wtLiqSupply, userDestinationLiquidity: userCssolWtAta,
+        liquidityTokenProgram: TOKEN_2022_PROGRAM_ID, amount: lamports,
+      }));
+
+      // Refresh csSOL FIRST — the obligation already contains a csSOL
+      // deposit, so any subsequent `refresh_obligation` call iterates
+      // it and requires it to be fresh-in-current-slot. Same-tx
+      // refreshes stay fresh for the whole tx, so we only do this
+      // once even though klend's positional check_refresh wants
+      // refresh_reserve immediately at N-2.
+      ixes.push(await buildRefreshReserveIx(CSSOL_RESERVE, CSSOL_RESERVE_ORACLE));
+
+      // refresh_reserve(WT) + refresh_obligation([csSOL]) — N-2 / N-1
+      // for the deposit ix that follows. The obligation only has csSOL
+      // at this point (WT will be added by the next ix).
+      ixes.push(await buildRefreshReserveIx(CSSOL_WT_RESERVE, CSSOL_RESERVE_ORACLE));
+      ixes.push(await buildRefreshObligationIx(owner, [CSSOL_RESERVE]));
+
+      // deposit X csSOL-WT into obligation as collateral
+      ixes.push(await buildDepositLiquidityAndCollateralIx({
+        user: owner, reserve: CSSOL_WT_RESERVE,
+        liquidityMint: CSSOL_WT_MINT, liquidityTokenProgram: TOKEN_2022_PROGRAM_ID,
+        userSourceLiquidity: userCssolWtAta, amount: lamports,
+      }));
+
+      // The deposit just modified the WT reserve's liquidity supply,
+      // which marks last_update.stale=1. Re-refresh WT before the
+      // refresh_obligation that follows — otherwise klend trips
+      // ReserveStale when iterating the obligation's deposits.
+      ixes.push(await buildRefreshReserveIx(CSSOL_WT_RESERVE, CSSOL_RESERVE_ORACLE));
+
+      // refresh_reserve(csSOL) at N-2 + refresh_obligation([csSOL, WT])
+      // at N-1 for the withdraw ix. Obligation now holds both deposits.
+      ixes.push(await buildRefreshReserveIx(CSSOL_RESERVE, CSSOL_RESERVE_ORACLE));
+      ixes.push(await buildRefreshObligationIx(owner, [CSSOL_RESERVE, CSSOL_WT_RESERVE]));
+
+      // withdraw X csSOL collateral as liquidity (assumes 1:1 cToken↔liquidity at fresh exchange rate)
+      ixes.push(await buildWithdrawCollateralAndRedeemIx({
+        user: owner, reserve: CSSOL_RESERVE,
+        liquidityMint: CSSOL_MINT, liquidityTokenProgram: TOKEN_2022_PROGRAM_ID,
+        userDestinationLiquidity: userCssolAta, collateralAmount: lamports,
+        refreshObligationDeposits: [CSSOL_WT_RESERVE], // remaining deposit after withdraw
+      }));
+
+      // 13: governor::enqueue_withdraw_via_pool — burns the just-withdrawn csSOL,
+      // mints fresh csSOL-WT to the user (which they'll use to repay the flash).
+      // (Reuse the existing build helper from cssolWt.ts.)
+      const enqueueIx = await buildEnqueueWithdrawViaPoolIx({
+        user: owner, base: baseKp.publicKey, amount: lamports,
+        cssolWtMint: CSSOL_WT_MINT, vrtMint: CSSOL_VRT_MINT,
+        vaultStakerWithdrawalTicket, vaultStakerWithdrawalTicketTokenAccount: ticketVrtAta,
+        jitoVaultConfig: jitoConfig,
+      });
+      ixes.push(enqueueIx);
+
+      // 14: flash_repay
+      ixes.push(await buildFlashRepayIx({
+        user: owner, reserve: CSSOL_WT_RESERVE, liquidityMint: CSSOL_WT_MINT,
+        reserveDestinationLiquidity: wtLiqSupply, userSourceLiquidity: userCssolWtAta,
+        liquidityTokenProgram: TOKEN_2022_PROGRAM_ID,
+        amount: lamports, borrowInstructionIndex: borrowIxIdx,
+      }));
+
+      // Compile to v0 with LUT (compresses static accounts to 1-byte indices)
+      const { blockhash } = await connection.getLatestBlockhash("confirmed");
+      const msg = new TransactionMessage({
+        payerKey: owner, recentBlockhash: blockhash, instructions: ixes,
+      }).compileToV0Message([lutAccount]);
+      const vtx = new VersionedTransaction(msg);
+      const serialized = vtx.serialize();
+      setLog((l) => [...l, `tx assembled: ${ixes.length} ixes, ${serialized.length} bytes (limit 1232)`]);
+      if (serialized.length > 1232) throw new Error(`tx too large: ${serialized.length} > 1232`);
+
+      vtx.sign([baseKp]);  // partial-sign with ephemeral base
+      if (!wallet.signTransaction) throw new Error("wallet has no signTransaction");
+      const signed = await wallet.signTransaction(vtx);
+      setLog((l) => [...l, "submitting …"]);
+      const sig = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true });
+      setLog((l) => [...l, `submitted: ${sig}`]);
+      await connection.confirmTransaction(sig, "confirmed");
+      const receipt = await connection.getTransaction(sig, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
+      if (receipt?.meta?.err) {
+        const logs = receipt.meta.logMessages?.slice(-12).join("\n") ?? "";
+        throw new Error(`leveraged unwind on-chain err: ${JSON.stringify(receipt.meta.err)}\n${logs}`);
+      }
+      setLog((l) => [...l, "✓ confirmed"]);
+      await refresh();
+    } catch (e: any) {
+      setError(`${e.message ?? e}`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function enqueueUnwind() {
@@ -442,6 +661,31 @@ export default function OneStepUnwindTab() {
           </div>
         </div>
       </div>
+
+      {CSSOL_WT_RESERVE && DEPOSIT_LUT ? (
+        <div className="card bg-base-300 border border-primary/30">
+          <div className="card-body p-4 space-y-3">
+            <div className="font-bold">Leveraged unwind via flash-loan collateral swap</div>
+            <p className="text-xs opacity-80">
+              For positions with active wSOL borrow against csSOL collateral. Single signature
+              swaps your csSOL collateral for csSOL-WT collateral inside klend's eMode 2 (LTV
+              preserved), then queues the underlying unstake — without ever needing external
+              SOL liquidity to repay your borrow. Zero AMM impact, zero flash-loan fee
+              (verified <code>flashLoanFeeSf = 0</code> on the WT reserve).
+            </p>
+            <p className="text-xs opacity-60">
+              ix sequence: <code>flashBorrow(WT) → deposit_collateral(WT) → withdraw_collateral(csSOL) → enqueue → flashRepay(WT)</code>
+            </p>
+            <div className="flex items-center gap-2">
+              <span className="text-sm opacity-70">amount: same as Step 1</span>
+              <button className="btn btn-primary" onClick={leveragedUnwind} disabled={busy || setupMissing}>
+                {busy ? <span className="loading loading-spinner loading-sm" /> : null}
+                Unwind {amount} csSOL via flash-loan
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div className="card bg-base-200">
         <div className="card-body p-4 space-y-3">

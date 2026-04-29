@@ -22,6 +22,7 @@ interface ImportMetaEnv {
   readonly VITE_DEPOSIT_LUT?: string;
   readonly VITE_CSSOL_WT_MINT?: string;
   readonly VITE_POOL_PENDING_WSOL_ACCOUNT?: string;
+  readonly VITE_CSSOL_WT_RESERVE?: string;
 }
 
 interface ImportMeta {

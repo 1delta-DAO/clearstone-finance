@@ -84,3 +84,9 @@ export const CSSOL_WT_MINT: PublicKey | null = _cssolWtMint ? new PublicKey(_css
 
 const _poolPendingWsol = import.meta.env.VITE_POOL_PENDING_WSOL_ACCOUNT;
 export const POOL_PENDING_WSOL_ACCOUNT: PublicKey | null = _poolPendingWsol ? new PublicKey(_poolPendingWsol) : null;
+
+// csSOL-WT klend reserve — set after running scripts/setup-cssol-wt-reserve.ts.
+// Required by the leveraged-unwind flash-loan path; the v0 unwind tab still
+// works without it.
+const _cssolWtReserve = import.meta.env.VITE_CSSOL_WT_RESERVE;
+export const CSSOL_WT_RESERVE: PublicKey | null = _cssolWtReserve ? new PublicKey(_cssolWtReserve) : null;

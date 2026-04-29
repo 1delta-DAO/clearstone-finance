@@ -214,3 +214,211 @@ export async function buildDepositCsSolIx(owner: PublicKey, amount: bigint): Pro
 }
 
 export const KLEND_RESERVES = { csSOL: CSSOL_RESERVE, wSOL: WSOL_RESERVE };
+
+// klend global config (fee-receiver-of-fee-receivers, etc.). Same on
+// devnet + mainnet for the canonical klend deployment.
+const KLEND_GLOBAL_CONFIG = new PublicKey("BEe6HXZf6cByeb8iCxukjB8k74kJN3cVbBAGi49Hfi6W");
+
+export function feeReceiverPda(reserve: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync([enc.encode("fee_receiver"), reserve.toBuffer()], KLEND_PROGRAM)[0];
+}
+
+/**
+ * Build klend `flash_borrow_reserve_liquidity`. The flash loan must be
+ * paired with a matching `flash_repay_reserve_liquidity` later in the
+ * same tx; klend uses sysvar-instructions to verify the pair.
+ *
+ * Account layout matches the SDK at @kamino-finance/klend-sdk
+ * @codegen/instructions/flashBorrowReserveLiquidity.ts (12 keys).
+ *
+ * @param liquidityMint The reserve's liquidity mint (csSOL_WT for the
+ *                      leveraged-unwind path). Token program is inferred
+ *                      from the mint owner — caller passes it directly.
+ */
+export async function buildFlashBorrowIx(args: {
+  user: PublicKey;
+  reserve: PublicKey;
+  liquidityMint: PublicKey;
+  reserveSourceLiquidity: PublicKey;
+  userDestinationLiquidity: PublicKey;
+  liquidityTokenProgram: PublicKey;
+  amount: bigint;
+}): Promise<TransactionInstruction> {
+  const lma = lendingMarketAuthority(KLEND_MARKET);
+  const data = new Uint8Array(8 + 8);
+  data.set(await sha256_8("global:flash_borrow_reserve_liquidity"), 0);
+  new DataView(data.buffer).setBigUint64(8, args.amount, true);
+
+  return new TransactionInstruction({
+    programId: KLEND_PROGRAM,
+    keys: [
+      { pubkey: args.user, isSigner: true, isWritable: false },             // user_transfer_authority
+      { pubkey: lma, isSigner: false, isWritable: false },
+      { pubkey: KLEND_MARKET, isSigner: false, isWritable: false },
+      { pubkey: args.reserve, isSigner: false, isWritable: true },
+      { pubkey: args.liquidityMint, isSigner: false, isWritable: false },
+      { pubkey: args.reserveSourceLiquidity, isSigner: false, isWritable: true },
+      { pubkey: args.userDestinationLiquidity, isSigner: false, isWritable: true },
+      { pubkey: feeReceiverPda(args.reserve), isSigner: false, isWritable: true },
+      { pubkey: KLEND_PROGRAM, isSigner: false, isWritable: false },        // referrer_token_state = None sentinel
+      { pubkey: KLEND_PROGRAM, isSigner: false, isWritable: false },        // referrer_account = None sentinel
+      { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
+      { pubkey: args.liquidityTokenProgram, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.from(data),
+  });
+}
+
+/**
+ * Build klend `flash_repay_reserve_liquidity`. `borrowInstructionIndex`
+ * is the position of the matching flash_borrow ix in the outer tx
+ * (zero-indexed from the start of the tx, NOT including the
+ * sysvar-instructions header). klend reads sysvar-instructions to
+ * locate the borrow and verify the amount matches.
+ */
+export async function buildFlashRepayIx(args: {
+  user: PublicKey;
+  reserve: PublicKey;
+  liquidityMint: PublicKey;
+  reserveDestinationLiquidity: PublicKey;
+  userSourceLiquidity: PublicKey;
+  liquidityTokenProgram: PublicKey;
+  amount: bigint;
+  borrowInstructionIndex: number;
+}): Promise<TransactionInstruction> {
+  const lma = lendingMarketAuthority(KLEND_MARKET);
+  const data = new Uint8Array(8 + 8 + 1);
+  data.set(await sha256_8("global:flash_repay_reserve_liquidity"), 0);
+  new DataView(data.buffer).setBigUint64(8, args.amount, true);
+  data[16] = args.borrowInstructionIndex;
+
+  return new TransactionInstruction({
+    programId: KLEND_PROGRAM,
+    keys: [
+      { pubkey: args.user, isSigner: true, isWritable: false },             // user_transfer_authority
+      { pubkey: lma, isSigner: false, isWritable: false },
+      { pubkey: KLEND_MARKET, isSigner: false, isWritable: false },
+      { pubkey: args.reserve, isSigner: false, isWritable: true },
+      { pubkey: args.liquidityMint, isSigner: false, isWritable: false },
+      { pubkey: args.reserveDestinationLiquidity, isSigner: false, isWritable: true },
+      { pubkey: args.userSourceLiquidity, isSigner: false, isWritable: true },
+      { pubkey: feeReceiverPda(args.reserve), isSigner: false, isWritable: true },
+      { pubkey: KLEND_PROGRAM, isSigner: false, isWritable: false },        // referrer_token_state = None
+      { pubkey: KLEND_PROGRAM, isSigner: false, isWritable: false },        // referrer_account = None
+      { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
+      { pubkey: args.liquidityTokenProgram, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.from(data),
+  });
+}
+
+/**
+ * Build `deposit_reserve_liquidity_and_obligation_collateral` for
+ * csSOL-WT (the inverse of `buildDepositCsSolIx`). Mirrors the same
+ * 14-account layout but parameterized for any reserve.
+ */
+export async function buildDepositLiquidityAndCollateralIx(args: {
+  user: PublicKey;
+  reserve: PublicKey;
+  liquidityMint: PublicKey;
+  liquidityTokenProgram: PublicKey;
+  userSourceLiquidity: PublicKey;
+  amount: bigint;
+}): Promise<TransactionInstruction> {
+  const obligation = obligationPda(args.user);
+  const lma = lendingMarketAuthority(KLEND_MARKET);
+  const liqSupply = reserveLiqSupply(args.reserve);
+  const collMint = reserveCollMint(args.reserve);
+  const collDest = reserveCollSupply(args.reserve);
+
+  const data = new Uint8Array(8 + 8);
+  data.set(await sha256_8("global:deposit_reserve_liquidity_and_obligation_collateral"), 0);
+  new DataView(data.buffer).setBigUint64(8, args.amount, true);
+
+  return new TransactionInstruction({
+    programId: KLEND_PROGRAM,
+    keys: [
+      { pubkey: args.user, isSigner: true, isWritable: true },
+      { pubkey: obligation, isSigner: false, isWritable: true },
+      { pubkey: KLEND_MARKET, isSigner: false, isWritable: false },
+      { pubkey: lma, isSigner: false, isWritable: false },
+      { pubkey: args.reserve, isSigner: false, isWritable: true },
+      { pubkey: args.liquidityMint, isSigner: false, isWritable: true },
+      { pubkey: liqSupply, isSigner: false, isWritable: true },
+      { pubkey: collMint, isSigner: false, isWritable: true },
+      { pubkey: collDest, isSigner: false, isWritable: true },
+      { pubkey: args.userSourceLiquidity, isSigner: false, isWritable: true },
+      { pubkey: KLEND_PROGRAM, isSigner: false, isWritable: false },          // placeholderUserDestinationCollateral
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },       // collateralTokenProgram
+      { pubkey: args.liquidityTokenProgram, isSigner: false, isWritable: false },
+      { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.from(data),
+  });
+}
+
+/**
+ * Build `withdraw_obligation_collateral_and_redeem_reserve_collateral` —
+ * the inverse of `deposit_reserve_liquidity_and_obligation_collateral`.
+ * Withdraws `amount` cTokens from the obligation, redeems them for the
+ * underlying liquidity, and credits the user's liquidity ATA.
+ */
+export async function buildWithdrawCollateralAndRedeemIx(args: {
+  user: PublicKey;
+  reserve: PublicKey;
+  liquidityMint: PublicKey;
+  liquidityTokenProgram: PublicKey;
+  userDestinationLiquidity: PublicKey;
+  collateralAmount: bigint;
+  refreshObligationDeposits: PublicKey[]; // already-fresh deposit reserves to pass to klend's check_refresh
+}): Promise<TransactionInstruction> {
+  const obligation = obligationPda(args.user);
+  const lma = lendingMarketAuthority(KLEND_MARKET);
+  const liqSupply = reserveLiqSupply(args.reserve);
+  const collMint = reserveCollMint(args.reserve);
+  const collSrc = reserveCollSupply(args.reserve);
+
+  const data = new Uint8Array(8 + 8);
+  data.set(await sha256_8("global:withdraw_obligation_collateral_and_redeem_reserve_collateral"), 0);
+  new DataView(data.buffer).setBigUint64(8, args.collateralAmount, true);
+
+  // Account ordering per @kamino-finance/klend-sdk (verified):
+  //  0 owner (W, signer)
+  //  1 obligation (W)
+  //  2 lending_market (RO)
+  //  3 lending_market_authority (RO)
+  //  4 withdraw_reserve (W)
+  //  5 reserve_liquidity_mint (RO)               ← read-only!
+  //  6 reserve_source_collateral (= reserve_coll_supply PDA) (W)
+  //  7 reserve_collateral_mint (W)
+  //  8 reserve_liquidity_supply (W)
+  //  9 user_destination_liquidity (W)
+  // 10 placeholder_user_destination_collateral (RO, None sentinel = klend program id)
+  // 11 collateral_token_program (RO)
+  // 12 liquidity_token_program (RO)
+  // 13 instruction_sysvar_account (RO)
+  return new TransactionInstruction({
+    programId: KLEND_PROGRAM,
+    keys: [
+      { pubkey: args.user, isSigner: true, isWritable: true },
+      { pubkey: obligation, isSigner: false, isWritable: true },
+      { pubkey: KLEND_MARKET, isSigner: false, isWritable: false },
+      { pubkey: lma, isSigner: false, isWritable: false },
+      { pubkey: args.reserve, isSigner: false, isWritable: true },
+      { pubkey: args.liquidityMint, isSigner: false, isWritable: false },
+      { pubkey: collSrc, isSigner: false, isWritable: true },
+      { pubkey: collMint, isSigner: false, isWritable: true },
+      { pubkey: liqSupply, isSigner: false, isWritable: true },
+      { pubkey: args.userDestinationLiquidity, isSigner: false, isWritable: true },
+      { pubkey: KLEND_PROGRAM, isSigner: false, isWritable: false },
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: args.liquidityTokenProgram, isSigner: false, isWritable: false },
+      { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
+      // remaining: deposit reserves passed to refresh_obligation logic
+      ...args.refreshObligationDeposits.map((r) => ({ pubkey: r, isSigner: false, isWritable: true })),
+    ],
+    data: Buffer.from(data),
+  });
+}
+
+void KLEND_GLOBAL_CONFIG; // referenced indirectly via update_reserve_config; kept here as a static address constant
