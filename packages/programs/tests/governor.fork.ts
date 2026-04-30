@@ -2,9 +2,9 @@
  * Governor Pool Creation — Fork Integration Test
  *
  * Demonstrates the full governor-orchestrated flow:
- *   1. governor.initializePool() — creates PoolConfig + dUSDY mint via CPI to delta-mint
+ *   1. governor.initializePool() — creates PoolConfig + cUSDY mint via CPI to delta-mint
  *   2. governor.addParticipant(Holder) — whitelist operator via CPI
- *   3. governor.mintWrapped() — mint dUSDY via CPI
+ *   3. governor.mintWrapped() — mint cUSDY via CPI
  *   4. Off-chain: create klend market + reserves
  *   5. governor.registerLendingMarket() — register klend addresses
  *   6. governor.addParticipant(Liquidator) — whitelist liquidator bot
@@ -290,7 +290,7 @@ describe("governor-pool-creation (mainnet fork)", () => {
   });
 
   // =========================================================================
-  // Phase 1 — Governor: initialize pool (creates dUSDY mint via CPI)
+  // Phase 1 — Governor: initialize pool (creates cUSDY mint via CPI)
   // =========================================================================
 
   it("initializes a KYC-gated lending pool via governor", async () => {
@@ -327,19 +327,19 @@ describe("governor-pool-creation (mainnet fork)", () => {
     expect(pool.decimals).to.equal(6);
     expect(JSON.stringify(pool.status)).to.include("initializing");
 
-    // Verify dUSDY mint was created via CPI
+    // Verify cUSDY mint was created via CPI
     const mintConfig = await deltaMintProgram.account.mintConfig.fetch(dmMintConfigPda);
     expect(mintConfig.decimals).to.equal(6);
     expect(mintConfig.mint.toBase58()).to.equal(wrappedMintKeypair.publicKey.toBase58());
 
     console.log(`\n    Pool created:     ${poolConfigPda.toBase58()}`);
-    console.log(`    dUSDY mint:      ${wrappedMintKeypair.publicKey.toBase58()}`);
+    console.log(`    cUSDY mint:      ${wrappedMintKeypair.publicKey.toBase58()}`);
     console.log(`    Underlying:      USDY (${USDY_MINT.toBase58()})`);
     console.log(`    Oracle:          ${PYTH_USDY_PRICE.toBase58()}`);
   });
 
   // =========================================================================
-  // Phase 2 — Governor: whitelist operator + mint dUSDY
+  // Phase 2 — Governor: whitelist operator + mint cUSDY
   // =========================================================================
 
   it("whitelists the operator as a Holder via governor", async () => {
@@ -362,7 +362,7 @@ describe("governor-pool-creation (mainnet fork)", () => {
     expect(JSON.stringify(entry.role)).to.include("holder");
   });
 
-  it("mints 100 dUSDY to operator via governor", async () => {
+  it("mints 100 cUSDY to operator via governor", async () => {
     // First register the market to activate the pool (mint_wrapped requires Active status)
     // For now, let's register with placeholder addresses to activate, then update later
     await governorProgram.methods
@@ -391,7 +391,7 @@ describe("governor-pool-creation (mainnet fork)", () => {
     );
 
     await governorProgram.methods
-      .mintWrapped(new BN(100_000_000)) // 100 dUSDY
+      .mintWrapped(new BN(100_000_000)) // 100 cUSDY
       .accounts({
         authority: provider.wallet.publicKey,
         poolConfig: poolConfigPda,
@@ -411,7 +411,7 @@ describe("governor-pool-creation (mainnet fork)", () => {
     expect(ataInfo).to.not.be.null;
     const balance = ataInfo!.data.readBigUInt64LE(64);
     expect(Number(balance)).to.equal(100_000_000);
-    console.log("    Minted 100 dUSDY via governor → operator ATA");
+    console.log("    Minted 100 cUSDY via governor → operator ATA");
   });
 
   // =========================================================================
@@ -502,7 +502,7 @@ describe("governor-pool-creation (mainnet fork)", () => {
 
         console.log(`\n    klend market: ${marketKeypair.publicKey.toBase58()}`);
 
-        // --- dUSDY reserve ---
+        // --- cUSDY reserve ---
         const reserveRent = await provider.connection.getMinimumBalanceForRentExemption(RESERVE_ACCOUNT_SIZE);
         const operatorDusdyAta = getAssociatedTokenAddressSync(
           wrappedMintKeypair.publicKey, owner, false, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
@@ -517,7 +517,7 @@ describe("governor-pool-creation (mainnet fork)", () => {
             wrappedMintKeypair.publicKey, operatorDusdyAta, TOKEN_2022_PROGRAM_ID),
         );
         await provider.sendAndConfirm(tx2, [dUsdyReserveKeypair]);
-        console.log(`    dUSDY reserve: ${dUsdyReserveKeypair.publicKey.toBase58()}`);
+        console.log(`    cUSDY reserve: ${dUsdyReserveKeypair.publicKey.toBase58()}`);
 
         // --- USDC reserve ---
         const operatorUsdcAta = getAssociatedTokenAddressSync(
@@ -582,14 +582,14 @@ describe("governor-pool-creation (mainnet fork)", () => {
     console.log(`    Pool PDA:        ${poolConfigPda.toBase58()}`);
     console.log(`    Status:          Active`);
     console.log(`    Underlying:      USDY (${USDY_MINT.toBase58().slice(0, 8)}...)`);
-    console.log(`    Wrapped mint:    dUSDY (${wrappedMintKeypair.publicKey.toBase58().slice(0, 8)}...)`);
+    console.log(`    Wrapped mint:    cUSDY (${wrappedMintKeypair.publicKey.toBase58().slice(0, 8)}...)`);
     console.log(`    Oracle (USDY):   ${PYTH_USDY_PRICE.toBase58()}`);
     console.log(`    Oracle (USDC):   ${PYTH_USDC_PRICE.toBase58()}`);
     console.log(`    LTV / Liq:       ${pool.ltvPct}% / ${pool.liquidationThresholdPct}%`);
     console.log(`    Whitelisted:     ${mintConfig.totalWhitelisted.toNumber()} participants`);
     if (klendExecutionWorks) {
       console.log(`    klend market:    ${marketKeypair.publicKey.toBase58()}`);
-      console.log(`    dUSDY reserve:   ${dUsdyReserveKeypair.publicKey.toBase58()}`);
+      console.log(`    cUSDY reserve:   ${dUsdyReserveKeypair.publicKey.toBase58()}`);
       console.log(`    USDC reserve:    ${usdcReserveKeypair.publicKey.toBase58()}`);
     }
     console.log("    ============================================\n");

@@ -2,7 +2,7 @@
  * Lending namespace
  *
  * User-facing operations for interacting with a configured klend market:
- *   - deposit   — Deposit collateral (dUSDY) into a reserve
+ *   - deposit   — Deposit collateral (cUSDY) into a reserve
  *   - withdraw  — Withdraw collateral from an obligation
  *   - borrow    — Borrow liquidity (USDC) against collateral
  *   - repay     — Repay borrowed liquidity

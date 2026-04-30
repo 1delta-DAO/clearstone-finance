@@ -42,23 +42,42 @@ export const POOL_VRT_ATA = new PublicKey(
   import.meta.env.VITE_POOL_VRT_ATA ?? "BvBy8orQZPXFwR6fgyCkLoyZfK1TBRteG5g4ipuqrEZp",
 );
 
+// cSOL — KYC-wrapped wSOL, the loan-asset side of the credit trade.
+// Pool deployed via scripts/deploy-csol-pool-devnet.ts. Same delta-mint
+// gate as csSOL (separate MintConfig). Not yet wired into a klend
+// reserve — see CREDIT_TRADE_PLAN.md §5.5 for the v4 lockout.
+export const CSOL_MINT = new PublicKey(
+  import.meta.env.VITE_CSOL_MINT ?? "AX66E5UvhdndwBfdebrW2YeGbsQhRndsPfNWGd16xBhf",
+);
+export const CSOL_POOL_PDA = new PublicKey(
+  import.meta.env.VITE_CSOL_POOL_PDA ?? "7LrzKp9UHfgR3AVqDtdWeB5N9CaxLdVUVJGTzNGcUAeQ",
+);
+export const CSOL_POOL_WSOL_VAULT = new PublicKey(
+  import.meta.env.VITE_CSOL_POOL_WSOL_VAULT ?? "6fH4CVZ6m9mUBRBdbFT6Tqu4bGr29eC5cvybuA2tYQ3o",
+);
+export const CSOL_DM_MINT_CONFIG = new PublicKey(
+  import.meta.env.VITE_CSOL_DM_MINT_CONFIG ??
+    "GJTRSUzfsXaroq4z4praK2Pu9VDZSmAkaj6h6XftEf3B", // PDA(["mint_config", CSOL_MINT], delta-mint)
+);
+
 // Klend market + reserves for csSOL elevation group 2.
 export const KLEND_PROGRAM = new PublicKey(
   import.meta.env.VITE_KLEND_PROGRAM ?? "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD",
 );
-// v2 unified market — bootstrapped via scripts/bootstrap-cssol-market-v2.ts
-// (the v1 market `2gRy7f…heyejW` is locked due to klend's reserve_config
-// validation lockout once group 1 was registered; v2 has all 5 reserves
-// (csSOL, wSOL, csSOL-WT, deUSX, sUSDC) plus both elevation groups
-// (1 = stables, 2 = LST/SOL) configured cleanly).
+// v3 unified market — bootstrapped via scripts/bootstrap-cssol-market-v2.ts
+// (the v2 market `En6zW…iDSi` and the v1 market `2gRy7f…heyejW` are both
+// permanently locked: klend's reserve_config_check rejects every
+// update once an elevation group references unconfigured per-collateral
+// borrow caps. v3 sets `borrow_limit_against_this_collateral_in_elevation_group[i]`
+// during bootstrap, so eMode borrows actually work).
 export const KLEND_MARKET = new PublicKey(
-  import.meta.env.VITE_KLEND_MARKET ?? "En6zW3ne2rf7jWZt7tCs98ixUvEqLM4siAuuigtTiDSi",
+  import.meta.env.VITE_KLEND_MARKET ?? "EVw8B9WC2AX5ScCwkYJF2mZz6RdHLQZtoDeKChdMiz2E",
 );
 export const CSSOL_RESERVE = new PublicKey(
-  import.meta.env.VITE_CSSOL_RESERVE ?? "ARL4xwastet7NPaedBJRsPnHtHmQDzuqXa6FjD2Uny8s",
+  import.meta.env.VITE_CSSOL_RESERVE ?? "eCrKcmHytENDieb3Ff5YLY7ATsmduXB4EDT4u6dPX9w",
 );
 export const WSOL_RESERVE = new PublicKey(
-  import.meta.env.VITE_WSOL_RESERVE ?? "F1HhwbkAihXwVx8KNLz6WhNdcGAPbr7NKKsdHqQGXdk4",
+  import.meta.env.VITE_WSOL_RESERVE ?? "CaPUL8sijx9Qw32Ao2PMdotEKqQLMneA5ZvRnvsa6VF8",
 );
 // Oracle accounts read by klend's RefreshReserve. The csSOL oracle is the
 // accrual-oracle output account (pythConfiguration.price), which itself is
@@ -81,6 +100,13 @@ export const ELEVATION_GROUP_LST_SOL = 2;
 const _depositLut = import.meta.env.VITE_DEPOSIT_LUT;
 export const DEPOSIT_LUT: PublicKey | null = _depositLut ? new PublicKey(_depositLut) : null;
 
+// Credit-trade LUT (init-credit-trade-lut.ts). Compresses ~34 static
+// pubkeys (klend market+reserves+PDAs, Jito vault, governor pool,
+// programs, sysvars) so the 19-ix open path fits a versioned tx.
+export const CREDIT_TRADE_LUT = new PublicKey(
+  import.meta.env.VITE_CREDIT_TRADE_LUT ?? "GsQd5QNJUoSgxeUYKiyciiyoXNo4ozNJsxN1Fp1rXG9y",
+);
+
 // csSOL-WT (withdraw ticket) addresses — populated by
 // scripts/setup-cssol-wt-mint.ts and scripts/init-pool-pending-wsol.ts.
 // Optional: the unwind tab disables itself if either is missing.
@@ -93,5 +119,5 @@ export const POOL_PENDING_WSOL_ACCOUNT: PublicKey | null = _poolPendingWsol ? ne
 // csSOL-WT klend reserve — set after running scripts/setup-cssol-wt-reserve.ts.
 // Required by the leveraged-unwind flash-loan path; the v0 unwind tab still
 // works without it.
-const _cssolWtReserve = import.meta.env.VITE_CSSOL_WT_RESERVE ?? "FHDGQyNFHurXKPHPBBC1b3orGSuJqkdpgz9vwr9pHfQU";
+const _cssolWtReserve = import.meta.env.VITE_CSSOL_WT_RESERVE ?? "94UQxxQfEVPCCpQsh9uyakHsPX9QqPoCBZnjHz4RU4iw";
 export const CSSOL_WT_RESERVE: PublicKey | null = _cssolWtReserve ? new PublicKey(_cssolWtReserve) : null;

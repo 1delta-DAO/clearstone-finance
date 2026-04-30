@@ -89,7 +89,7 @@ export function refreshObligation(
  * @param owner         User wallet (signer)
  * @param market        Lending market
  * @param reserve       Reserve to deposit into
- * @param mint          Token mint (dUSDY or USDC)
+ * @param mint          Token mint (cUSDY or USDC)
  * @param tokenProgram  TOKEN_PROGRAM_ID or TOKEN_2022_PROGRAM_ID
  * @param amount        Amount in base units
  * @param seed          Obligation seed (default 0)

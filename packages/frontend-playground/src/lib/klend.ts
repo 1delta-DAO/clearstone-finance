@@ -39,7 +39,7 @@ const enc = new TextEncoder();
 function lendingMarketAuthority(market: PublicKey): PublicKey {
   return PublicKey.findProgramAddressSync([enc.encode("lma"), market.toBuffer()], KLEND_PROGRAM)[0];
 }
-function reserveLiqSupply(reserve: PublicKey): PublicKey {
+export function reserveLiqSupply(reserve: PublicKey): PublicKey {
   return PublicKey.findProgramAddressSync([enc.encode("reserve_liq_supply"), reserve.toBuffer()], KLEND_PROGRAM)[0];
 }
 function reserveCollMint(reserve: PublicKey): PublicKey {
@@ -432,6 +432,11 @@ export async function buildBorrowObligationLiquidityIx(args: {
   liquidityTokenProgram: PublicKey;
   userDestinationLiquidity: PublicKey;
   amount: bigint;
+  /** Every non-zero deposit reserve in the obligation. klend
+   *  iterates these as remaining_accounts to compute max borrow
+   *  value and verify the new LTV — missing them surfaces as
+   *  InvalidAccountInput (6006) at lending_operations.rs:2760. */
+  obligationDepositReserves?: PublicKey[];
 }): Promise<TransactionInstruction> {
   const obligation = obligationPda(args.user);
   const lma = lendingMarketAuthority(KLEND_MARKET);
@@ -440,24 +445,25 @@ export async function buildBorrowObligationLiquidityIx(args: {
   data.set(await sha256_8("global:borrow_obligation_liquidity"), 0);
   new DataView(data.buffer).setBigUint64(8, args.amount, true);
 
-  return new TransactionInstruction({
-    programId: KLEND_PROGRAM,
-    keys: [
-      { pubkey: args.user, isSigner: true, isWritable: true },
-      { pubkey: obligation, isSigner: false, isWritable: true },
-      { pubkey: KLEND_MARKET, isSigner: false, isWritable: false },
-      { pubkey: lma, isSigner: false, isWritable: false },
-      { pubkey: args.borrowReserve, isSigner: false, isWritable: true },
-      { pubkey: args.liquidityMint, isSigner: false, isWritable: false },
-      { pubkey: liqSupply, isSigner: false, isWritable: true },
-      { pubkey: feeReceiverPda(args.borrowReserve), isSigner: false, isWritable: true },
-      { pubkey: args.userDestinationLiquidity, isSigner: false, isWritable: true },
-      { pubkey: KLEND_PROGRAM, isSigner: false, isWritable: false }, // referrer_token_state = None
-      { pubkey: args.liquidityTokenProgram, isSigner: false, isWritable: false },
-      { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
-    ],
-    data: Buffer.from(data),
-  });
+  const keys = [
+    { pubkey: args.user, isSigner: true, isWritable: true },
+    { pubkey: obligation, isSigner: false, isWritable: true },
+    { pubkey: KLEND_MARKET, isSigner: false, isWritable: false },
+    { pubkey: lma, isSigner: false, isWritable: false },
+    { pubkey: args.borrowReserve, isSigner: false, isWritable: true },
+    { pubkey: args.liquidityMint, isSigner: false, isWritable: false },
+    { pubkey: liqSupply, isSigner: false, isWritable: true },
+    { pubkey: feeReceiverPda(args.borrowReserve), isSigner: false, isWritable: true },
+    { pubkey: args.userDestinationLiquidity, isSigner: false, isWritable: true },
+    { pubkey: KLEND_PROGRAM, isSigner: false, isWritable: false }, // referrer_token_state = None
+    { pubkey: args.liquidityTokenProgram, isSigner: false, isWritable: false },
+    { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
+    // Remaining accounts: obligation's deposit reserves (writable per
+    // klend SDK addBorrowObligationLiquidityIx convention).
+    ...(args.obligationDepositReserves ?? []).map((r) => ({ pubkey: r, isSigner: false, isWritable: true })),
+  ];
+
+  return new TransactionInstruction({ programId: KLEND_PROGRAM, keys, data: Buffer.from(data) });
 }
 
 /** Build klend `repay_obligation_liquidity`. Caller must precede with

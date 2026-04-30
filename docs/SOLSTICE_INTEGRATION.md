@@ -72,9 +72,9 @@ The API returns a serialized Solana instruction to include in your transaction.
 │  1. Deposit USDC/USDT ──→ Mint USX (Solstice API)     │
 │  2. Lock USX ──→ Get eUSX (YieldVault, earns ~10%)    │
 │  3. KYC Check ──→ Whitelist wallet (Governor)          │
-│  4. Wrap eUSX ──→ Get deUSX (KYC-gated d-token)       │
-│  5. Deposit deUSX ──→ Collateral in klend market       │
-│  6. Borrow USDC ──→ Against deUSX collateral           │
+│  4. Wrap eUSX ──→ Get ceUSX (KYC-gated d-token)       │
+│  5. Deposit ceUSX ──→ Collateral in klend market       │
+│  6. Borrow USDC ──→ Against ceUSX collateral           │
 │                                                        │
 │  Net effect: Earn ~10% on collateral, borrow at ~5%   │
 │  = ~5% carry trade for institutional treasury          │

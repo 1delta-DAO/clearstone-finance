@@ -126,7 +126,7 @@ pub mod delta_mint {
     }
 
     /// Adds a wallet as an approved liquidator.
-    /// Liquidators can receive dUSDY collateral during Kamino liquidations
+    /// Liquidators can receive cUSDY collateral during Kamino liquidations
     /// without going through full KYC — they are pre-vetted bot operators.
     pub fn add_liquidator(ctx: Context<AddToWhitelist>) -> Result<()> {
         let entry = &mut ctx.accounts.whitelist_entry;

@@ -127,15 +127,19 @@ export default function RateCurvePanel() {
 
   return (
     <div className="flex flex-col gap-6">
-      <p className="opacity-50 text-sm">
-        View the on-chain borrow rate curve for any klend reserve.
-        To change the IRM, use <code className="bg-base-300 px-1 rounded text-xs">npx tsx scripts/replace-reserve-irm.ts</code> (creates a new reserve with the desired curve).
-      </p>
+      <div>
+        <span className="eyebrow">Operator</span>
+        <h2 className="text-2xl mt-1">Rate Curves</h2>
+        <p className="text-sm text-base-content/55 mt-1">
+          On-chain borrow rate curves for klend reserves. To change the IRM, use{" "}
+          <code className="bg-base-300 px-1 rounded text-xs">npx tsx scripts/replace-reserve-irm.ts</code>.
+        </p>
+      </div>
 
       {/* Reserve selector */}
-      <div className="card bg-base-200 border border-base-300 shadow-sm">
+      <div className="panel">
         <div className="card-body p-6 gap-4">
-          <h3 className="text-base font-semibold">Select Reserve</h3>
+          <h3 className="text-base">Select Reserve</h3>
           <div className="flex gap-3 flex-wrap">
             <Dropdown
               value={selectedIdx}
@@ -160,7 +164,7 @@ export default function RateCurvePanel() {
 
       {/* Chart + Table */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="card bg-base-200 border border-base-300 shadow-sm">
+        <div className="panel">
           <div className="card-body p-5">
             <h3 className="text-base font-semibold mb-2">Borrow Rate Curve</h3>
             {curve ? <Chart curve={curve} /> : (
@@ -171,7 +175,7 @@ export default function RateCurvePanel() {
           </div>
         </div>
 
-        <div className="card bg-base-200 border border-base-300 shadow-sm">
+        <div className="panel">
           <div className="card-body p-5">
             <h3 className="text-base font-semibold mb-2">Curve Points</h3>
             {displayCurve ? (

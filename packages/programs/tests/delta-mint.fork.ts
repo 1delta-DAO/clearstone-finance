@@ -206,7 +206,7 @@ describe("delta-mint (mainnet fork)", () => {
     expect(entry.approved).to.be.true;
   });
 
-  it("mints 10,000 KYC-wrapped USDY (dUSDY) to the whitelisted user", async () => {
+  it("mints 10,000 KYC-wrapped USDY (cUSDY) to the whitelisted user", async () => {
     const destinationAta = getAssociatedTokenAddressSync(
       mintKeypair.publicKey,
       recipient.publicKey,

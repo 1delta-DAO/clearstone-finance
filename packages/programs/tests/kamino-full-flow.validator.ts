@@ -289,10 +289,10 @@ describe("kamino-full-flow (test-validator)", () => {
   });
 
   // =========================================================================
-  // Step 1 — Mint KYC-gated dUSDY
+  // Step 1 — Mint KYC-gated cUSDY
   // =========================================================================
 
-  it("creates dUSDY mint + whitelist + mints 1000 dUSDY", async () => {
+  it("creates cUSDY mint + whitelist + mints 1000 cUSDY", async () => {
     await deltaMint.methods.initializeMint(6).accounts({
       authority: owner, mint: dUsdyMintKp.publicKey,
       mintConfig: mintConfigPda, mintAuthority: mintAuthPda,
@@ -314,8 +314,8 @@ describe("kamino-full-flow (test-validator)", () => {
       destination: ata, tokenProgram: TOKEN_2022_PROGRAM_ID,
     }).preInstructions([createAta]).rpc({ commitment: "confirmed" });
 
-    console.log(`    dUSDY mint: ${dUsdyMintKp.publicKey.toBase58()}`);
-    console.log("    Minted 1000 dUSDY to KYC'd operator");
+    console.log(`    cUSDY mint: ${dUsdyMintKp.publicKey.toBase58()}`);
+    console.log("    Minted 1000 cUSDY to KYC'd operator");
   });
 
   // =========================================================================
@@ -341,7 +341,7 @@ describe("kamino-full-flow (test-validator)", () => {
     console.log(`    Market: ${marketKp.publicKey.toBase58()}`);
   });
 
-  it("creates dUSDY collateral reserve", async () => {
+  it("creates cUSDY collateral reserve", async () => {
     const dusdyAta = getAssociatedTokenAddressSync(dUsdyMintKp.publicKey, owner, false, TOKEN_2022_PROGRAM_ID);
     const rent = await provider.connection.getMinimumBalanceForRentExemption(RESERVE_ACCOUNT_SIZE);
     const tx = new Transaction().add(
@@ -354,7 +354,7 @@ describe("kamino-full-flow (test-validator)", () => {
         dUsdyMintKp.publicKey, dusdyAta, TOKEN_2022_PROGRAM_ID),
     );
     await sendTx(provider, tx, [dUsdyReserveKp]);
-    console.log(`    dUSDY reserve: ${dUsdyReserveKp.publicKey.toBase58()}`);
+    console.log(`    cUSDY reserve: ${dUsdyReserveKp.publicKey.toBase58()}`);
   });
 
   it("creates USDC borrow reserve", async () => {
@@ -392,7 +392,7 @@ describe("kamino-full-flow (test-validator)", () => {
   });
 
   // =========================================================================
-  // Step 4 — Deposit 500 dUSDY as collateral
+  // Step 4 — Deposit 500 cUSDY as collateral
   // =========================================================================
 
   it("creates user metadata and obligation", async () => {
@@ -453,16 +453,16 @@ describe("kamino-full-flow (test-validator)", () => {
     console.log("    ║  KYC-GATED KAMINO V2 INTEGRATION — PROVEN       ║");
     console.log("    ╠══════════════════════════════════════════════════╣");
     console.log("    ║  On-chain (test-validator, real BPF):            ║");
-    console.log(`    ║  ✔ dUSDY mint (Token-2022 + CT)                 ║`);
+    console.log(`    ║  ✔ cUSDY mint (Token-2022 + CT)                 ║`);
     console.log(`    ║  ✔ KYC whitelist + mint gating                  ║`);
     console.log(`    ║  ✔ klend market created                         ║`);
-    console.log(`    ║  ✔ dUSDY collateral reserve (Token-2022)        ║`);
+    console.log(`    ║  ✔ cUSDY collateral reserve (Token-2022)        ║`);
     console.log(`    ║  ✔ USDC borrow reserve                          ║`);
     console.log(`    ║  ✔ User obligation + metadata                   ║`);
     console.log("    ║                                                  ║");
     console.log("    ║  Remaining (mainnet via Kamino Manager SDK):     ║");
     console.log("    ║  → updateReserveConfig (LTV, oracle, limits)    ║");
-    console.log("    ║  → deposit dUSDY collateral                     ║");
+    console.log("    ║  → deposit cUSDY collateral                     ║");
     console.log("    ║  → borrow USDC                                  ║");
     console.log("    ║  (blocked in test-validator by 32KB heap limit) ║");
     console.log("    ╚══════════════════════════════════════════════════╝\n");

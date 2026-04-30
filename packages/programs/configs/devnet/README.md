@@ -9,7 +9,7 @@ pnpm deploy:mnemonic                # or pnpm deploy:devnet
 # 2. Create mock USDC oracle (no V2 USDC feed on devnet)
 pnpm devnet:oracles
 
-# 3. Initialize governor pool + create dUSDY mint
+# 3. Initialize governor pool + create cUSDY mint
 pnpm devnet:governor
 
 # 4. Create klend market, reserves, configure oracles, register with governor
@@ -35,7 +35,7 @@ klend on devnet uses the same program as mainnet (`KLend2g3cP87fffoy8q1mQqGKjrxj
 | File | Purpose |
 |------|---------|
 | `oracle-feeds.json` | All available Pyth feed addresses (V2 + push) |
-| `delta_usdy_reserve.json` | dUSDY collateral reserve config (Pyth V2 USDY) |
+| `delta_usdy_reserve.json` | cUSDY collateral reserve config (Pyth V2 USDY) |
 | `usdc_borrow_reserve.json` | USDC borrow reserve config (mock oracle) |
 | `deployment.json` | Generated — governor pool addresses |
 | `oracles-deployed.json` | Generated — deployed oracle addresses |

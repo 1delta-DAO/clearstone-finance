@@ -78,7 +78,7 @@ async function main() {
   await mintTo(conn, authority, usdyMint, usdyAta.address, authority, 1_000_000 * 1e6); // 1M USDY
   console.log(`  Minted 1M test USDY\n`);
 
-  // === Step 2: Create governor pool + dUSDY mint ===
+  // === Step 2: Create governor pool + cUSDY mint ===
   console.log("--- Step 2: Initialize governor pool ---");
 
   const govIdl = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "target", "idl", "governor.json"), "utf8"));
@@ -124,14 +124,14 @@ async function main() {
       .signers([wrappedMintKp])
       .rpc();
     console.log(`  Pool: ${poolConfig.toBase58()}`);
-    console.log(`  dUSDY mint: ${wrappedMintKp.publicKey.toBase58()}`);
+    console.log(`  cUSDY mint: ${wrappedMintKp.publicKey.toBase58()}`);
     console.log(`  Tx: ${sig.slice(0, 20)}...\n`);
   } catch (e: any) {
     console.log(`  Pool creation: ${e.message?.slice(0, 100)}\n`);
   }
 
-  // === Step 3: Whitelist + mint dUSDY ===
-  console.log("--- Step 3: Whitelist + mint dUSDY ---");
+  // === Step 3: Whitelist + mint cUSDY ===
+  console.log("--- Step 3: Whitelist + mint cUSDY ---");
 
   const [whitelistEntry] = PublicKey.findProgramAddressSync(
     [Buffer.from("whitelist"), dmMintConfig.toBuffer(), authority.publicKey.toBuffer()],
@@ -157,7 +157,7 @@ async function main() {
     console.log(`  Whitelist: ${e.message?.slice(0, 80)}`);
   }
 
-  // Create dUSDY ATA and mint
+  // Create cUSDY ATA and mint
   const dUsdyAta = getAssociatedTokenAddressSync(
     wrappedMintKp.publicKey, authority.publicKey, false, TOKEN_2022_PROGRAM_ID
   );
@@ -187,7 +187,7 @@ async function main() {
         tokenProgram: TOKEN_2022_PROGRAM_ID,
       })
       .rpc();
-    console.log(`  Minted 100,000 dUSDY\n`);
+    console.log(`  Minted 100,000 cUSDY\n`);
   } catch (e: any) {
     console.log(`  Mint: ${e.message?.slice(0, 80)}\n`);
   }

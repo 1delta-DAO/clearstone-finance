@@ -28,7 +28,7 @@ export default function MintPanel() {
   const [status, setStatus] = useState<{ msg: string; type: "ok" | "err" | "info" } | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Mint dUSDY state
+  // Mint cUSDY state
   const [dUsdyRecipient, setDUsdyRecipient] = useState("");
   const [dUsdyAmount, setDUsdyAmount] = useState("");
 
@@ -106,11 +106,11 @@ export default function MintPanel() {
     setLoading(false);
   }, [publicKey, token, mintAmount, connection, sendTransaction]);
 
-  // Mint dUSDY (wrapped token via governor)
+  // Mint cUSDY (wrapped token via governor)
   const handleMintDUSDY = useCallback(async () => {
     if (!governor || !publicKey || !dUsdyRecipient || !dUsdyAmount) return;
     setLoading(true);
-    setStatus({ msg: "Minting dUSDY...", type: "info" });
+    setStatus({ msg: "Minting cUSDY...", type: "info" });
     try {
       const recipient = new PublicKey(dUsdyRecipient);
       const amount = new BN(parseFloat(dUsdyAmount) * 1e6);
@@ -146,10 +146,10 @@ export default function MintPanel() {
           tokenProgram: TOKEN_2022_PROGRAM_ID,
         })
         .rpc();
-      setStatus({ msg: `Minted ${dUsdyAmount} dUSDY! Tx: ${sig.slice(0, 20)}...`, type: "ok" });
+      setStatus({ msg: `Minted ${dUsdyAmount} cUSDY! Tx: ${sig.slice(0, 20)}...`, type: "ok" });
       setDUsdyAmount("");
     } catch (e: any) {
-      setStatus({ msg: `Mint dUSDY failed: ${e.message?.slice(0, 100)}`, type: "err" });
+      setStatus({ msg: `Mint cUSDY failed: ${e.message?.slice(0, 100)}`, type: "err" });
     }
     setLoading(false);
   }, [governor, publicKey, dUsdyRecipient, dUsdyAmount, connection, config]);
@@ -159,9 +159,13 @@ export default function MintPanel() {
 
   return (
     <div className="flex flex-col gap-6">
-      <p className="opacity-50 text-sm">
-        Mint test underlying tokens (devnet only). Then go to the <strong>Wrap</strong> tab to convert them into KYC-gated d-tokens.
-      </p>
+      <div>
+        <span className="eyebrow">Operator</span>
+        <h2 className="text-2xl mt-1">Mint</h2>
+        <p className="text-sm text-base-content/55 mt-1">
+          Mint test underlying tokens (devnet only). Then use <strong>Wrap</strong> to convert them into KYC-gated d-tokens.
+        </p>
+      </div>
 
       {status && (
         <div role="alert" className={`alert ${status.type === "ok" ? "alert-success" : status.type === "err" ? "alert-error" : "alert-info"}`}>
@@ -170,7 +174,7 @@ export default function MintPanel() {
       )}
 
       {/* Balances */}
-      <div className="card bg-base-200 border border-base-300 shadow-sm">
+      <div className="panel">
         <div className="card-body p-6 gap-4">
           <h3 className="card-title text-base">Your Balances</h3>
           <div className="overflow-x-auto">
@@ -197,7 +201,7 @@ export default function MintPanel() {
       </div>
 
       {/* Mint Form */}
-      <div className="card bg-base-200 border border-base-300 shadow-sm">
+      <div className="panel">
         <div className="card-body p-6 gap-4">
           <h3 className="card-title text-base">Mint Test Tokens</h3>
           <p className="text-xs opacity-40">
@@ -228,12 +232,12 @@ export default function MintPanel() {
         </div>
       </div>
 
-      {/* Mint dUSDY (wrapped tokens via governor) */}
-      <div className="card bg-base-200 border border-base-300 shadow-sm">
+      {/* Mint cUSDY (wrapped tokens via governor) */}
+      <div className="panel">
         <div className="card-body p-6 gap-4">
-          <h3 className="card-title text-base">Mint dUSDY</h3>
+          <h3 className="card-title text-base">Mint cUSDY</h3>
           <p className="text-xs opacity-40">
-            Mint KYC-wrapped dUSDY tokens to a whitelisted counterparty. Requires admin authority.
+            Mint KYC-wrapped cUSDY tokens to a whitelisted counterparty. Requires admin authority.
           </p>
           <div className="flex gap-3">
             <input
@@ -254,14 +258,14 @@ export default function MintPanel() {
               disabled={loading || !dUsdyRecipient || !dUsdyAmount || !ready}
               className="btn btn-primary whitespace-nowrap"
             >
-              {loading ? "Minting..." : "Mint dUSDY"}
+              {loading ? "Minting..." : "Mint cUSDY"}
             </button>
           </div>
         </div>
       </div>
 
       {/* Flow guide */}
-      <div className="card bg-base-200 border border-base-300 shadow-sm">
+      <div className="panel">
         <div className="card-body p-6 gap-4">
           <h3 className="card-title text-sm opacity-70">How it works</h3>
           <ul className="steps steps-vertical text-sm">

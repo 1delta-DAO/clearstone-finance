@@ -44,8 +44,8 @@ interface CollateralAsset {
 
 const COLLATERAL_ASSETS: CollateralAsset[] = [
   {
-    name: "deUSX (yield-bearing eUSX)",
-    symbol: "deUSX",
+    name: "ceUSX (yield-bearing eUSX)",
+    symbol: "ceUSX",
     mint: DEUSX_MINT,
     reserve: new PublicKey("3FkBgVfnYBnUre6GMQZv8w4dDM1x7Fp5RiGk96kZ5mVs"),
     oracle: new PublicKey("6dbNQrjLVQxk1bJhbB6AiMFWzaf8G2d3LPjH69Je498A"),
@@ -167,7 +167,7 @@ export default function CollateralPage() {
         ]});
       }
 
-      // If eUSX selected: auto-wrap to deUSX first
+      // If eUSX selected: auto-wrap to ceUSX first
       if (asset.symbol === "eUSX") {
         const [dmAuthority] = PublicKey.findProgramAddressSync([Buffer.from("mint_authority"), DEUSX_MINT.toBuffer()], DELTA_MINT);
         const [whitelistEntry] = PublicKey.findProgramAddressSync([Buffer.from("whitelist"), EUSX_DM_CONFIG.toBuffer(), publicKey.toBuffer()], DELTA_MINT);
@@ -175,13 +175,13 @@ export default function CollateralPage() {
         const vaultAta = getAssociatedTokenAddressSync(EUSX_MINT, EUSX_POOL, true, TOKEN_PROGRAM_ID);
         const userDeusxAta = getAssociatedTokenAddressSync(DEUSX_MINT, publicKey, false, TOKEN_2022_PROGRAM_ID);
 
-        // Create deUSX ATA if needed
+        // Create ceUSX ATA if needed
         const deusxAtaInfo = await connection.getAccountInfo(userDeusxAta);
         if (!deusxAtaInfo) {
           tx.add(createAssociatedTokenAccountInstruction(publicKey, userDeusxAta, publicKey, DEUSX_MINT, TOKEN_2022_PROGRAM_ID));
         }
 
-        // Wrap eUSX → deUSX
+        // Wrap eUSX → ceUSX
         const wrapAmtBuf = Buffer.alloc(8);
         wrapAmtBuf.writeBigUInt64LE(amountLamports, 0);
         tx.add({
@@ -205,14 +205,14 @@ export default function CollateralPage() {
         });
       }
 
-      // For deposit: use deUSX mint and Token-2022 program (even if user selected eUSX — we just wrapped it)
+      // For deposit: use ceUSX mint and Token-2022 program (even if user selected eUSX — we just wrapped it)
       const depositMint = asset.symbol === "eUSX" ? DEUSX_MINT : asset.mint;
       const depositTokenProgram = asset.symbol === "eUSX" ? TOKEN_2022_PROGRAM_ID : asset.tokenProgram;
 
       // Refresh ALL reserves the obligation has positions in (+ the deposit reserve)
       // IMPORTANT: The deposit reserve MUST be refreshed LAST (klend check_refresh verifies order)
       const RESERVE_ORACLES: Record<string, PublicKey> = {
-        "3FkBgVfnYBnUre6GMQZv8w4dDM1x7Fp5RiGk96kZ5mVs": new PublicKey("6dbNQrjLVQxk1bJhbB6AiMFWzaf8G2d3LPjH69Je498A"), // deUSX
+        "3FkBgVfnYBnUre6GMQZv8w4dDM1x7Fp5RiGk96kZ5mVs": new PublicKey("6dbNQrjLVQxk1bJhbB6AiMFWzaf8G2d3LPjH69Je498A"), // ceUSX
         "AYhwFLgzxWwqznhxv6Bg1NVnNeoDNu9SBGLzM1W3hSfb": new PublicKey("EN2FsFZFdpiFAWpKDZqeJ2PY8EyE7xzz9Ew8ZQVhtHCJ"), // sUSDC
         "HhTUuM5XwpnQchiUiLVNxUjPkHtfbcX4aF4bWKCSSAuT": new PublicKey("4Xv1RpZQHZNHatTba3xUW4foLYUM6x36NxehihVcUnPQ"), // dtUSDY
       };
@@ -274,11 +274,12 @@ export default function CollateralPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold">Supply Collateral</h2>
-        <p className="text-sm text-base-content/50 mt-1">Deposit KYC-wrapped tokens as collateral to borrow Solstice USDC.</p>
+        <span className="eyebrow">Lending</span>
+        <h2 className="text-2xl mt-1">Supply Collateral</h2>
+        <p className="text-sm text-base-content/55 mt-1">Deposit KYC-wrapped tokens as collateral to borrow Solstice USDC.</p>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="card bg-base-200 border border-base-300">
+        <div className="panel">
           <div className="card-body p-6 gap-4">
             <h3 className="card-title">Deposit Collateral</h3>
             <div className="flex gap-1 bg-base-300 rounded-lg p-1">
@@ -302,7 +303,7 @@ export default function CollateralPage() {
             {status && <div className={"alert text-sm " + (status.type === "success" ? "alert-success" : status.type === "error" ? "alert-error" : "alert-info")}>{status.msg}</div>}
           </div>
         </div>
-        <div className="card bg-base-200 border border-base-300">
+        <div className="panel">
           <div className="card-body p-6 gap-3">
             <h3 className="card-title">{asset.symbol} Details</h3>
             <div className="space-y-3 text-sm">

@@ -91,6 +91,18 @@ body {
   color: var(--color-base-content);
 }
 
+/* Headings default to the display family so every page in the stack
+   gets the brand voice without per-component edits. Manrope at medium
+   weights — light enough to feel elegant, weighty enough to read. */
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  letter-spacing: -0.012em;
+}
+h1 { font-weight: 300; }   /* hero / page titles */
+h2 { font-weight: 400; }   /* section titles */
+h3 { font-weight: 500; }   /* card titles */
+h4 { font-weight: 500; }
+
 /* Display / wordmark — Manrope at thin weights for elegance.
    - clearstone: light, slightly tight tracking
    - fusion:     extralight, generous tracking, lowercase */
@@ -112,6 +124,25 @@ body {
 
 /* Tabular numbers for prices / TVL / rates */
 .num, .tabular { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+
+/* Big figure — display family + tabular nums + tight tracking. Use for
+   prominent KPIs (TVL, total assets, APY) where numbers are the headline. */
+.figure {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  letter-spacing: -0.02em;
+}
+
+/* Small caps eyebrow — tracked-out uppercase label, matches landing pattern */
+.eyebrow {
+  font-size: 0.6875rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--color-stone-3, #7C8BA3);
+  font-weight: 500;
+}
 
 /* Reusable surface utilities */
 .panel {

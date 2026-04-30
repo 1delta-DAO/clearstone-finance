@@ -85,6 +85,13 @@ export default function AdminPanel() {
 
   return (
     <div className="flex flex-col gap-6">
+      <div>
+        <span className="eyebrow">Operator</span>
+        <h2 className="text-2xl mt-1">Admin</h2>
+        <p className="text-sm text-base-content/55 mt-1">
+          Root authority controls — manage admins, emergency pauses, and program parameters.
+        </p>
+      </div>
       {isAdmin === false && (
         <div role="alert" className="alert alert-warning">
           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
@@ -109,7 +116,7 @@ export default function AdminPanel() {
       {/* KYC Whitelist */}
       <Card title="KYC Whitelist Management">
         <p className="opacity-50 text-sm mb-3">
-          Add a wallet to the KYC whitelist to allow them to hold dUSDY.
+          Add a wallet to the KYC whitelist to allow them to hold cUSDY.
         </p>
         <div className="flex gap-3">
           <input
@@ -130,7 +137,7 @@ export default function AdminPanel() {
           <span>Cluster:</span><span>Devnet</span>
           <span>Governor Pool:</span>
           <Addr value={config.pool.poolConfig.toBase58()} />
-          <span>dUSDY Mint:</span>
+          <span>cUSDY Mint:</span>
           <Addr value={config.pool.wrappedMint.toBase58()} />
           <span>delta-mint:</span>
           <Addr value={config.programs.deltaMint.toBase58()} />
@@ -150,9 +157,9 @@ export default function AdminPanel() {
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="card bg-base-200 border border-base-300 shadow-sm">
+    <div className="panel">
       <div className="card-body p-6 gap-4">
-        <h3 className="text-base font-semibold">{title}</h3>
+        <h3 className="text-base">{title}</h3>
         {children}
       </div>
     </div>

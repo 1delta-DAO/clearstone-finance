@@ -27,6 +27,8 @@ import {
   CSSOL_VAULT_ST_TOKEN_ACCOUNT,
   CSSOL_WT_MINT,
   CSSOL_WT_RESERVE,
+  DELTA_MINT_PROGRAM,
+  DM_MINT_CONFIG,
   ELEVATION_GROUP_LST_SOL,
   JITO_VAULT_PROGRAM,
   KLEND_MARKET,
@@ -87,30 +89,32 @@ const KNOWN_MINTS: Record<string, { symbol: string; tokenProgram: PublicKey; ora
   [CSSOL_MINT.toBase58()]: { symbol: "csSOL", tokenProgram: TOKEN_2022_PROGRAM_ID, oracle: CSSOL_RESERVE_ORACLE },
   [NATIVE_MINT.toBase58()]: { symbol: "wSOL", tokenProgram: TOKEN_PROGRAM_ID, oracle: WSOL_RESERVE_ORACLE },
   ...(CSSOL_WT_MINT ? { [CSSOL_WT_MINT.toBase58()]: { symbol: "csSOL-WT", tokenProgram: TOKEN_2022_PROGRAM_ID, oracle: CSSOL_RESERVE_ORACLE } } : {}),
-  // Stables on the v2 unified csSOL market (see
-  // scripts/bootstrap-cssol-market-v2.ts). Oracles are mock-oracle
-  // PriceUpdateV2 accounts pinned to $1.08 (deUSX) and $1.00 (sUSDC).
-  "8Uy7rmtAZvnQA1SuYZJKKBXFovHDPEYXiYH3H6iQMRwT": { symbol: "deUSX", tokenProgram: TOKEN_2022_PROGRAM_ID, oracle: new PublicKey("CbZjUS1RjAVws1uAeNZVarPUy2e1daRnJwJcEnNqYD7V") },
-  "8iBux2LRja1PhVZph8Rw4Hi45pgkaufNEiaZma5nTD5g": { symbol: "sUSDC", tokenProgram: TOKEN_PROGRAM_ID, oracle: new PublicKey("D9P2AgwpnjVDCWG9DpkR9dxGSLNHASc93fj72DGheNP8") },
+  // Stables on the v3 unified csSOL market (see
+  // scripts/bootstrap-cssol-market-v2.ts, MARKET_VERSION=v3).
+  // Oracles are fresh mock-oracle PriceUpdateV2 accounts pinned to
+  // $1.08 (ceUSX) and $1.00 (sUSDC).
+  "8Uy7rmtAZvnQA1SuYZJKKBXFovHDPEYXiYH3H6iQMRwT": { symbol: "ceUSX", tokenProgram: TOKEN_2022_PROGRAM_ID, oracle: new PublicKey("3L8kkp8G6gxBmr7wdYJxvofEWxtUtUUAGJSokSLwzmyW") },
+  "8iBux2LRja1PhVZph8Rw4Hi45pgkaufNEiaZma5nTD5g": { symbol: "sUSDC", tokenProgram: TOKEN_PROGRAM_ID, oracle: new PublicKey("ETLQGfwHVfCYSqEG51ckf6h581e3k5CyoMnfz2WW45eD") },
 };
 
 const ELEVATION_GROUP_STABLES = 1;
 
 const ELEVATION_GROUPS: { id: number; label: string }[] = [
   { id: 0, label: "0 — None (default)" },
-  { id: ELEVATION_GROUP_STABLES, label: `${ELEVATION_GROUP_STABLES} — Stables (90% LTV; deUSX collateral, sUSDC debt)` },
+  { id: ELEVATION_GROUP_STABLES, label: `${ELEVATION_GROUP_STABLES} — Stables (90% LTV; ceUSX collateral, sUSDC debt)` },
   { id: ELEVATION_GROUP_LST_SOL, label: `${ELEVATION_GROUP_LST_SOL} — LST/SOL (90% LTV; csSOL+csSOL-WT collateral, wSOL debt)` },
 ];
 
-// Markets we can browse from this tab. v2 (KLEND_MARKET, the active one)
-// is the unified market built by scripts/bootstrap-cssol-market-v2.ts —
-// all five reserves and both elevation groups configured cleanly. v1
-// (`2gRy7f…heyejW`) and the standalone eUSX market are kept read-only
-// so any pre-migration test state can be inspected during wind-down.
+// Markets we can browse from this tab. v3 (KLEND_MARKET) is the
+// unified market with per-collateral elevation-group borrow caps set
+// up properly (eMode borrows actually work). v2 and v1 are kept
+// read-only — both are config-locked due to klend's reserve_config
+// validation refusing any update once a group is registered.
 const MARKETS: { pubkey: PublicKey; label: string; active: boolean }[] = [
-  { pubkey: KLEND_MARKET, label: "csSOL market v2 (active — unified, both eMode groups)", active: true },
+  { pubkey: KLEND_MARKET, label: "csSOL market v3 (active — unified, eMode borrows enabled)", active: true },
+  { pubkey: new PublicKey("En6zW3ne2rf7jWZt7tCs98ixUvEqLM4siAuuigtTiDSi"), label: "csSOL market v2 (read-only — eMode borrow caps locked at 0)", active: false },
   { pubkey: new PublicKey("2gRy7fYaPe8ooB1HqTfa2sJeJZ8KdVebhj88tgShyejW"), label: "csSOL market v1 (read-only — config locked)", active: false },
-  { pubkey: new PublicKey("45FNL648aXgbMoMzLfYE2vCZAtWWDCky2tYLCEUztc98"), label: "eUSX market (read-only — superseded by v2)", active: false },
+  { pubkey: new PublicKey("45FNL648aXgbMoMzLfYE2vCZAtWWDCky2tYLCEUztc98"), label: "eUSX market (read-only — superseded by v3)", active: false },
 ];
 
 export default function LendingPositionTab() {
@@ -118,6 +122,14 @@ export default function LendingPositionTab() {
   const wallet = useWallet();
   const [obligation, setObligation] = useState<ObligationView | null>(null);
   const [reserves, setReserves] = useState<Map<string, ReserveView>>(new Map());
+  // null = unknown (not yet checked / wallet disconnected),
+  // false = no whitelist PDA on-chain, true = whitelisted holder.
+  const [whitelisted, setWhitelisted] = useState<boolean | null>(null);
+  const [whitelistPda, setWhitelistPda] = useState<PublicKey | null>(null);
+  // Wallet balances per reserve mint (raw lamport-units, BigInt).
+  // Surfaced in the table so users see "have 0 csSOL" inline before
+  // ever attempting a deposit.
+  const [walletBalances, setWalletBalances] = useState<Map<string, bigint>>(new Map());
   // Discovered list of every reserve in the klend market — populated
   // once via getProgramAccounts and reused for the balance sheet.
   const [marketReserves, setMarketReserves] = useState<ReserveMeta[]>([]);
@@ -173,6 +185,37 @@ export default function LendingPositionTab() {
         if (v) map.set(metas[i].reserve.toBase58(), v);
       }
       setReserves(map);
+      // Wallet balances per reserve mint — single batched RPC for all
+      // user ATAs. ATAs that don't exist (or have zero balance) get 0.
+      const owner = wallet.publicKey;
+      const ataAddrs = metas.map((m) => getAssociatedTokenAddressSync(m.mint, owner, false, m.tokenProgram, ASSOCIATED_TOKEN_PROGRAM_ID));
+      const ataInfos = await connection.getMultipleAccountsInfo(ataAddrs, "confirmed");
+      const balMap = new Map<string, bigint>();
+      for (let i = 0; i < metas.length; i++) {
+        const info = ataInfos[i];
+        let bal = 0n;
+        if (info && info.data && info.data.length >= 72) {
+          // SPL Token + Token-2022 token account: amount at offset 64 (u64 LE).
+          bal = info.data.readBigUInt64LE(64);
+        }
+        balMap.set(metas[i].mint.toBase58(), bal);
+      }
+      setWalletBalances(balMap);
+
+      // Whitelist gate (delta-mint KYC). The csSOL governor's wrap CPI
+      // mints into the user's csSOL ATA, which delta-mint guards via a
+      // `whitelist` PDA at seeds=["whitelist", mintConfig, wallet]. If
+      // the entry doesn't exist, MintTo fails with AccountNotInitialized
+      // (3012). Surface this up-front so the user knows to get
+      // whitelisted before trying anything.
+      const [wlPda] = PublicKey.findProgramAddressSync(
+        [new TextEncoder().encode("whitelist"), DM_MINT_CONFIG.toBuffer(), owner.toBuffer()],
+        DELTA_MINT_PROGRAM,
+      );
+      setWhitelistPda(wlPda);
+      const wlInfo = await connection.getAccountInfo(wlPda, "confirmed");
+      setWhitelisted(!!wlInfo);
+
       if (ob.exists) setTargetElevationGroup(ob.elevationGroup);
     } catch (e: any) {
       setError(e.message ?? String(e));
@@ -263,6 +306,18 @@ export default function LendingPositionTab() {
     return parts.join("\n");
   }
 
+  /** Fetch program logs for a finalized signature, with a few retries
+   *  to ride out devnet RPC indexer lag (the receipt can return null
+   *  for ~1–2s after confirmation). */
+  async function fetchLogsWithRetry(sig: string, attempts = 4): Promise<string[]> {
+    for (let i = 0; i < attempts; i++) {
+      const receipt = await connection.getTransaction(sig, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
+      if (receipt?.meta?.logMessages?.length) return receipt.meta.logMessages;
+      await new Promise((r) => setTimeout(r, 750));
+    }
+    return [];
+  }
+
   async function send(ixes: TransactionInstruction[], label: string) {
     if (!wallet.publicKey || !wallet.signTransaction) throw new Error("wallet not connected");
     const tx = new Transaction();
@@ -274,14 +329,27 @@ export default function LendingPositionTab() {
     const signed = await wallet.signTransaction(tx);
     const sig = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true });
     setLog((l) => [...l, `submitted ${label}: ${sig}`]);
-    // Check the confirmation's value.err — this catches on-chain
-    // failures quickly without waiting on getTransaction (which can
-    // lag on devnet's free RPC).
-    const confirmed = await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
-    if (confirmed.value.err) {
-      const receipt = await connection.getTransaction(sig, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
-      const logs = receipt?.meta?.logMessages?.slice(-12).join("\n") ?? "";
-      throw new Error(`${label} on-chain err: ${JSON.stringify(confirmed.value.err)}\nsig=${sig}\n${logs}`);
+    // confirmTransaction in modern web3.js will THROW (not return a
+    // value with `.err`) when the tx fails on-chain — the thrown
+    // object is the raw `{InstructionError: …}` envelope, no
+    // `.message`. Catch it here so we always fetch the program logs
+    // and rethrow a proper Error with sig + last 12 log lines for
+    // fmtErr to render.
+    let txErr: unknown = null;
+    try {
+      const confirmed = await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
+      if (confirmed.value.err) txErr = confirmed.value.err;
+    } catch (e) {
+      txErr = e;
+    }
+    if (txErr) {
+      const logs = await fetchLogsWithRetry(sig);
+      const tail = logs.slice(-14).join("\n");
+      const errStr = typeof txErr === "string" ? txErr
+        : (txErr as any)?.message
+        ? String((txErr as any).message)
+        : JSON.stringify(txErr);
+      throw new Error(`${label} on-chain err: ${errStr}\nsig=${sig}\nexplorer: https://explorer.solana.com/tx/${sig}?cluster=devnet\n\n${tail || "(no program logs available — RPC indexer lag; retry the action and the next receipt should include logs)"}`);
     }
     setLog((l) => [...l, `✓ confirmed ${label}`]);
   }
@@ -343,6 +411,10 @@ export default function LendingPositionTab() {
     if (!wallet.publicKey) return;
     const lamports = BigInt(Math.round(Number(wrapAmount) * LAMPORTS_PER_SOL));
     if (lamports <= 0n) { setError("amount must be > 0"); return; }
+    if (whitelisted === false) {
+      setError("Wallet is not whitelisted on the csSOL pool — wrap would fail with AccountNotInitialized: whitelist_entry. Get whitelisted first (see banner above).");
+      return;
+    }
     setBusy(true); setError(null); setLog([`wrap ${wrapAmount} SOL → csSOL …`]);
     try {
       const owner = wallet.publicKey;
@@ -395,6 +467,19 @@ export default function LendingPositionTab() {
     try {
       const owner = wallet.publicKey;
       const userAta = getAssociatedTokenAddressSync(meta.mint, owner, false, meta.tokenProgram, ASSOCIATED_TOKEN_PROGRAM_ID);
+      // Pre-flight balance check for non-wSOL: surfaces the
+      // "insufficient funds" failure (Token / Token-2022 custom 0x1)
+      // before we burn base fees + build a doomed tx. wSOL is
+      // exempt — we wrap native SOL into the ATA in this tx, so
+      // pre-existing wSOL balance doesn't matter.
+      if (meta.symbol !== "wSOL") {
+        const ataInfo = await connection.getAccountInfo(userAta, "confirmed");
+        const bal = ataInfo ? BigInt(await connection.getTokenAccountBalance(userAta).then((b) => b.value.amount).catch(() => "0")) : 0n;
+        if (bal < amount) {
+          setError(`Insufficient ${meta.symbol} balance: have ${(Number(bal) / LAMPORTS_PER_SOL).toFixed(6)}, need ${(Number(amount) / LAMPORTS_PER_SOL).toFixed(6)}.${meta.symbol === "csSOL" ? " Wrap more SOL → csSOL using the card above first." : ""}`);
+          return;
+        }
+      }
       const ixes: TransactionInstruction[] = [
         ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }),
         ...await buildInitIxesIfNeeded(),
@@ -447,6 +532,10 @@ export default function LendingPositionTab() {
         user: owner, borrowReserve: meta.reserve,
         liquidityMint: meta.mint, liquidityTokenProgram: meta.tokenProgram,
         userDestinationLiquidity: userAta, amount,
+        // klend iterates each non-zero deposit reserve in
+        // remaining_accounts to compute max borrow value; missing
+        // them surfaces as InvalidAccountInput (6006).
+        obligationDepositReserves: obligation ? obligation.deposits.map((d) => d.reserve) : [],
       }));
       // For wSOL: close the ATA so the borrowed amount + any prior wSOL
       // + the ATA rent all flow back to the user as native SOL.
@@ -467,6 +556,15 @@ export default function LendingPositionTab() {
     try {
       const owner = wallet.publicKey;
       const userAta = getAssociatedTokenAddressSync(meta.mint, owner, false, meta.tokenProgram, ASSOCIATED_TOKEN_PROGRAM_ID);
+      // Pre-flight balance check (mirrors deposit handler). wSOL is
+      // exempt because we wrap native SOL into the ATA in this tx.
+      if (meta.symbol !== "wSOL") {
+        const bal = BigInt(await connection.getTokenAccountBalance(userAta).then((b) => b.value.amount).catch(() => "0"));
+        if (bal < amount) {
+          setError(`Insufficient ${meta.symbol} balance to repay: have ${(Number(bal) / LAMPORTS_PER_SOL).toFixed(6)}, need ${(Number(amount) / LAMPORTS_PER_SOL).toFixed(6)}.`);
+          return;
+        }
+      }
       const ixes: TransactionInstruction[] = [
         ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }),
         ...await buildInitIxesIfNeeded(),
@@ -600,6 +698,28 @@ export default function LendingPositionTab() {
         </p>
       </header>
 
+      {/* KYC / whitelist banner — csSOL is a Token-2022 mint guarded by
+          delta-mint; mint_to fails if the connected wallet lacks a
+          whitelist PDA. Surface the status up-front. */}
+      {whitelisted === false ? (
+        <div className="alert alert-warning text-sm">
+          <span>
+            <strong>Wallet not whitelisted.</strong> The csSOL Token-2022 mint
+            is KYC-gated — wraps will fail with{" "}
+            <code className="text-xs">AccountNotInitialized: whitelist_entry (3012)</code>.{" "}
+            Run{" "}
+            <code className="text-xs">DEPLOY_KEYPAIR=~/.config/solana/clearstone-devnet.json npx tsx scripts/whitelist-wallet.ts {wallet.publicKey?.toBase58()} holder</code>{" "}
+            from <code className="text-xs">packages/programs</code>, then refresh.
+            {whitelistPda ? <> PDA: <code className="text-xs">{short(whitelistPda)}</code></> : null}
+          </span>
+        </div>
+      ) : whitelisted === true ? (
+        <div className="text-xs opacity-60 flex items-center gap-2">
+          <span className="badge badge-success badge-sm">whitelisted</span>
+          <span>Holder role on the csSOL pool. PDA <code>{whitelistPda ? short(whitelistPda) : "—"}</code></span>
+        </div>
+      ) : null}
+
       {/* Summary card */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Stat label="NAV" value={fmtUsd(metrics.nav)} hint="depositValue − borrowValue" />
@@ -614,9 +734,9 @@ export default function LendingPositionTab() {
         <div className="card-body p-4 space-y-2">
           <div className="font-bold">Market <span className="text-xs opacity-60 font-normal">(klend lending market)</span></div>
           <p className="text-xs opacity-70">
-            The csSOL market is now unified — deUSX (collateral) and Solstice
+            The csSOL market is now unified — ceUSX (collateral) and Solstice
             USDC (debt) reserves were migrated in from the standalone eUSX
-            market, so a single obligation can hold csSOL/csSOL-WT/deUSX as
+            market, so a single obligation can hold csSOL/csSOL-WT/ceUSX as
             collateral against wSOL or sUSDC debt. The legacy eUSX market is
             kept read-only for wind-down of any pre-migration positions.
           </p>
@@ -653,7 +773,7 @@ export default function LendingPositionTab() {
           <p className="text-xs opacity-70">
             Group <code>0</code> is the default market (per-reserve LTVs).{" "}
             Group <code>{ELEVATION_GROUP_STABLES}</code> is the Stables eMode
-            (90% LTV / 92% liq; deUSX collateral, sUSDC debt).{" "}
+            (90% LTV / 92% liq; ceUSX collateral, sUSDC debt).{" "}
             Group <code>{ELEVATION_GROUP_LST_SOL}</code> is the LST/SOL eMode
             (90% LTV / 92% liq; csSOL + csSOL-WT collateral, wSOL debt).
             Switching is allowed only if the current obligation's deposits and
@@ -699,7 +819,7 @@ export default function LendingPositionTab() {
             <input type="number" step="0.001" min="0" className="input input-bordered input-sm w-32"
               value={wrapAmount} onChange={(e) => setWrapAmount(e.target.value)} disabled={busy} />
             <span className="text-sm opacity-70">SOL</span>
-            <button className="btn btn-sm btn-primary" disabled={busy || !wrapAmount} onClick={() => void handleWrapOnly()}>
+            <button className="btn btn-sm btn-primary" disabled={busy || !wrapAmount || whitelisted === false} onClick={() => void handleWrapOnly()}>
               {busy ? <span className="loading loading-spinner loading-xs" /> : null}
               Wrap to csSOL
             </button>
@@ -750,6 +870,9 @@ export default function LendingPositionTab() {
                           <td>
                             <div className="font-bold">{p.reserve.symbol}</div>
                             {isWsol ? <div className="text-[10px] opacity-50">auto-wrap/unwrap SOL</div> : null}
+                            <div className="text-[10px] opacity-50 font-mono">
+                              wallet: {fmt(Number(walletBalances.get(p.reserve.mint.toBase58()) ?? 0n) / LAMPORTS_PER_SOL, 4)}
+                            </div>
                           </td>
                           <td className="text-right font-mono text-xs">{price > 0 ? fmtUsd(price) : "—"}</td>
                           <td className="text-right font-mono text-xs" title={`liq threshold ${liq}%`}>
@@ -852,6 +975,9 @@ export default function LendingPositionTab() {
                           <td>
                             <div className="font-bold">{p.reserve.symbol}</div>
                             {isWsol ? <div className="text-[10px] opacity-50">auto-wrap/unwrap SOL</div> : null}
+                            <div className="text-[10px] opacity-50 font-mono">
+                              wallet: {fmt(Number(walletBalances.get(p.reserve.mint.toBase58()) ?? 0n) / LAMPORTS_PER_SOL, 4)}
+                            </div>
                           </td>
                           <td className="text-right font-mono text-xs">{price > 0 ? fmtUsd(price) : "—"}</td>
                           <td className="text-right font-mono text-xs" title={`liq threshold ${liq}%`}>

@@ -25,7 +25,7 @@ const CONFIG_DIR = path.join(__dirname, "..", "configs", "devnet");
 const FEEDS = [
   { label: "USDC/USD", price: 100000000, expo: -8 },   // $1.00
   { label: "USDY/USD", price: 105000000, expo: -8 },   // $1.05
-  { label: "dUSDY/USD", price: 105000000, expo: -8 },  // $1.05
+  { label: "cUSDY/USD", price: 105000000, expo: -8 },  // $1.05
 ];
 
 function loadKeypair(): Keypair {

@@ -36,7 +36,7 @@ async function main() {
   const dUsdyOracle = new PublicKey("E4pitSrZV9MWSspahe2vr26Cwsn3podnvHvW3cuT74R4");
 
   // Check oracle states
-  for (const [name, addr] of [["USDC", usdcOracle], ["dUSDY", dUsdyOracle]] as const) {
+  for (const [name, addr] of [["USDC", usdcOracle], ["cUSDY", dUsdyOracle]] as const) {
     const info = await conn.getAccountInfo(addr);
     console.log(`${name} oracle: ${addr.toBase58()}`);
     console.log(`  Owner: ${info?.owner.toBase58()}`);
@@ -55,7 +55,7 @@ async function main() {
   // Test RefreshReserve for USDC
   for (const [name, reserve, oracle] of [
     ["USDC", usdcReserve, usdcOracle],
-    ["dUSDY", dUsdyReserve, dUsdyOracle],
+    ["cUSDY", dUsdyReserve, dUsdyOracle],
   ] as const) {
     const tx = new Transaction();
     tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 }));

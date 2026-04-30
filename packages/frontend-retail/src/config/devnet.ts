@@ -47,7 +47,7 @@ export const DEVNET_CONFIG = {
     usdcOracle: new PublicKey("EN2FsFZFdpiFAWpKDZqeJ2PY8EyE7xzz9Ew8ZQVhtHCJ"),
     dUsdyReserve: new PublicKey("HhTUuM5XwpnQchiUiLVNxUjPkHtfbcX4aF4bWKCSSAuT"), // dtUSDY
     dUsdyOracle: new PublicKey("4Xv1RpZQHZNHatTba3xUW4foLYUM6x36NxehihVcUnPQ"),
-    deusxReserve: new PublicKey("3FkBgVfnYBnUre6GMQZv8w4dDM1x7Fp5RiGk96kZ5mVs"), // deUSX
+    deusxReserve: new PublicKey("3FkBgVfnYBnUre6GMQZv8w4dDM1x7Fp5RiGk96kZ5mVs"), // ceUSX
     deusxOracle: new PublicKey("6dbNQrjLVQxk1bJhbB6AiMFWzaf8G2d3LPjH69Je498A"),
   },
 };

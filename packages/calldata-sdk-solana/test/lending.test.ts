@@ -138,7 +138,7 @@ test("deposit: key layout pins obligation, market authority, supply PDAs", () =>
   );
 });
 
-test("deposit: honours TOKEN_2022 token program for dUSDY-style mints", () => {
+test("deposit: honours TOKEN_2022 token program for cUSDY-style mints", () => {
   const ix = deposit(OWNER, MARKET, RESERVE, MINT, TOKEN_2022_PROGRAM_ID, 1n);
   // user ATA at index 9 must be the TOKEN_2022 ATA.
   assert.equal(

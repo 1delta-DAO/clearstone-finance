@@ -66,7 +66,7 @@ async function main() {
   }
 
   const reserves = [
-    { name: "dUSDY", reserve: config.dUsdyReserve, oracle: config.dUsdyOracle },
+    { name: "cUSDY", reserve: config.dUsdyReserve, oracle: config.dUsdyOracle },
     { name: "USDC", reserve: config.usdcReserve, oracle: config.usdcOracle },
   ];
 
@@ -139,7 +139,7 @@ async function main() {
   const obligationAddr = "DUWxoAhQGc1MABXi7kQHGiW4PzCC4xf3c8LtfhdeTxtU";
   const obInfo = await conn.getAccountInfo(new PublicKey(obligationAddr));
   console.log(`  Obligation: ${obligationAddr.slice(0, 12)}... ${obInfo ? "✓ exists" : "✗ not created"}`);
-  console.log(`  Deposit dUSDY: ✓ (proven working)`);
+  console.log(`  Deposit cUSDY: ✓ (proven working)`);
   console.log(`  Borrow USDC:   ✓ (proven working)`);
 
   console.log("\n╔══════════════════════════════════════════════╗");

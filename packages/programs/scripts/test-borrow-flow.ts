@@ -1,8 +1,8 @@
 /**
  * test-borrow-flow.ts — Full borrow flow on devnet:
- *   1. RefreshReserve (dUSDY + USDC)
+ *   1. RefreshReserve (cUSDY + USDC)
  *   2. InitObligation
- *   3. DepositReserveLiquidityAndObligationCollateral (dUSDY)
+ *   3. DepositReserveLiquidityAndObligationCollateral (cUSDY)
  *   4. RefreshObligation
  *   5. BorrowObligationLiquidity (USDC)
  */
@@ -46,7 +46,7 @@ async function main() {
   const usdcOracle = new PublicKey(config.usdcOracle);
   const usdcMint = new PublicKey(config.usdcMint);
 
-  // Read dUSDY mint from deployment config
+  // Read cUSDY mint from deployment config
   const deployConfig = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "configs/devnet/deployment.json"), "utf8"));
   const dUsdyMint = new PublicKey(deployConfig.pool.wrappedMint);
 
@@ -56,16 +56,16 @@ async function main() {
   console.log("  Borrow Flow Test");
   console.log("============================================");
   console.log(`  Authority:    ${auth.publicKey.toBase58()}`);
-  console.log(`  dUSDY mint:   ${dUsdyMint.toBase58()}`);
+  console.log(`  cUSDY mint:   ${dUsdyMint.toBase58()}`);
   console.log(`  USDC mint:    ${usdcMint.toBase58()}`);
-  console.log(`  dUSDY reserve: ${dUsdyReserve.toBase58()}`);
+  console.log(`  cUSDY reserve: ${dUsdyReserve.toBase58()}`);
   console.log(`  USDC reserve:  ${usdcReserve.toBase58()}`);
   console.log("============================================\n");
 
   // Step 1: Refresh both reserves
   console.log("--- Step 1: RefreshReserve ---");
   for (const [name, reserve, oracle] of [
-    ["dUSDY", dUsdyReserve, dUsdyOracle],
+    ["cUSDY", dUsdyReserve, dUsdyOracle],
     ["USDC", usdcReserve, usdcOracle],
   ] as const) {
     const tx = new Transaction();
@@ -184,26 +184,26 @@ async function main() {
     }
   }
 
-  // Step 3: Deposit dUSDY as collateral
-  console.log("\n--- Step 3: Deposit dUSDY collateral ---");
+  // Step 3: Deposit cUSDY as collateral
+  console.log("\n--- Step 3: Deposit cUSDY collateral ---");
 
-  // Check dUSDY balance
+  // Check cUSDY balance
   const dUsdyAta = getAssociatedTokenAddressSync(dUsdyMint, auth.publicKey, false, TOKEN_2022_PROGRAM_ID);
   const dUsdyBalance = await conn.getTokenAccountBalance(dUsdyAta).catch(() => null);
-  console.log(`  dUSDY balance: ${dUsdyBalance?.value?.uiAmountString || "0"}`);
+  console.log(`  cUSDY balance: ${dUsdyBalance?.value?.uiAmountString || "0"}`);
 
   if (!dUsdyBalance || Number(dUsdyBalance.value.amount) === 0) {
-    console.log("  No dUSDY balance. Mint some first via: pnpm deploy:all:devnet");
+    console.log("  No cUSDY balance. Mint some first via: pnpm deploy:all:devnet");
     console.log("  Skipping deposit + borrow.");
     return;
   }
 
-  // Reserve PDAs for dUSDY
+  // Reserve PDAs for cUSDY
   const [dUsdyLiqSupply] = PublicKey.findProgramAddressSync([Buffer.from("reserve_liq_supply"), dUsdyReserve.toBuffer()], KLEND);
   const [dUsdyCollMint] = PublicKey.findProgramAddressSync([Buffer.from("reserve_coll_mint"), dUsdyReserve.toBuffer()], KLEND);
   const [dUsdyCollSupply] = PublicKey.findProgramAddressSync([Buffer.from("reserve_coll_supply"), dUsdyReserve.toBuffer()], KLEND);
 
-  const depositAmount = Math.min(Number(dUsdyBalance.value.amount), 100_000000); // 100 dUSDY max
+  const depositAmount = Math.min(Number(dUsdyBalance.value.amount), 100_000000); // 100 cUSDY max
 
   // depositReserveLiquidityAndObligationCollateral args: liquidity_amount(u64)
   const depositArgs = Buffer.alloc(8);
@@ -246,14 +246,14 @@ async function main() {
       { pubkey: dUsdyAta, isSigner: false, isWritable: true },          // userSourceLiquidity
       { pubkey: KLEND, isSigner: false, isWritable: false },            // placeholderUserDestinationCollateral (None)
       { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },       // collateralTokenProgram (cToken is SPL Token)
-      { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false }, // liquidityTokenProgram (dUSDY is Token-2022)
+      { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false }, // liquidityTokenProgram (cUSDY is Token-2022)
       { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
     ],
   });
 
   try {
     const sig = await sendAndConfirmTransaction(conn, depositTx, [auth]);
-    console.log(`  Deposited ${depositAmount / 1e6} dUSDY as collateral`);
+    console.log(`  Deposited ${depositAmount / 1e6} cUSDY as collateral`);
     console.log(`  Tx: ${sig.slice(0, 40)}...`);
   } catch (e: any) {
     console.log(`  Deposit failed:`);

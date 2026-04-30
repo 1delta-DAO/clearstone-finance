@@ -1,22 +1,22 @@
 /**
- * migrate-usx-into-cssol-market.ts — Add deUSX + Solstice USDC reserves to
+ * migrate-usx-into-cssol-market.ts — Add ceUSX + Solstice USDC reserves to
  * the csSOL klend market (cross-margin migration).
  *
  * Today we run two separate klend markets on devnet:
  *   - csSOL/wSOL LST market (`2gRy7f…heyejW`) — wSOL, csSOL, csSOL-WT
- *   - eUSX collateral market (`45FNL648…2tc98`)  — deUSX, Solstice USDC
+ *   - eUSX collateral market (`45FNL648…2tc98`)  — ceUSX, Solstice USDC
  *
  * Two markets means an institution that wants both LST exposure and USX
  * collateral has to maintain two obligations and can't cross-margin
- * between them. This script adds the deUSX and Solstice USDC reserves
+ * between them. This script adds the ceUSX and Solstice USDC reserves
  * directly into the csSOL market so a single obligation covers all four
  * collateral types and both debt assets.
  *
  * Steps (mirrors setup-eusx-market.ts but targets MARKET=csSOL):
- *   1. Create mock-oracle PriceUpdateV2 accounts for deUSX ($1.08) and
+ *   1. Create mock-oracle PriceUpdateV2 accounts for ceUSX ($1.08) and
  *      sUSDC ($1.00). We reuse the mock-oracle program so the price
  *      stays static — accrual-oracle isn't needed for stable assets.
- *   2. Run `init_reserve` on the csSOL market for deUSX (Token-2022).
+ *   2. Run `init_reserve` on the csSOL market for ceUSX (Token-2022).
  *   3. Run `init_reserve` on the csSOL market for Solstice USDC.
  *   4. Configure each reserve via `update_reserve_config` (name, oracle,
  *      LTV 75 / liq 85 / borrow factor 100 / limits).
@@ -253,9 +253,9 @@ async function main() {
   console.log("\n=== Step 1: Create Oracles ===");
   const deusxOracle = checkpoint.deusxOracle
     ? new PublicKey(checkpoint.deusxOracle)
-    : await createOracle(conn, auth, 1.08, "deUSX");
+    : await createOracle(conn, auth, 1.08, "ceUSX");
   if (!checkpoint.deusxOracle) { checkpoint.deusxOracle = deusxOracle.toBase58(); persist(); }
-  else console.log(`  Reusing deUSX oracle: ${deusxOracle.toBase58()}`);
+  else console.log(`  Reusing ceUSX oracle: ${deusxOracle.toBase58()}`);
 
   const solUsdcOracle = checkpoint.solUsdcOracle
     ? new PublicKey(checkpoint.solUsdcOracle)
@@ -263,8 +263,8 @@ async function main() {
   if (!checkpoint.solUsdcOracle) { checkpoint.solUsdcOracle = solUsdcOracle.toBase58(); persist(); }
   else console.log(`  Reusing sUSDC oracle: ${solUsdcOracle.toBase58()}`);
 
-  // Step 2: deUSX reserve (Token-2022)
-  console.log("\n=== Step 2: Create deUSX Reserve (Collateral, Token-2022) ===");
+  // Step 2: ceUSX reserve (Token-2022)
+  console.log("\n=== Step 2: Create ceUSX Reserve (Collateral, Token-2022) ===");
   const deusxReserve = checkpoint.deusxReserve
     ? new PublicKey(checkpoint.deusxReserve)
     : await createReserve(conn, auth, DEUSX, TOKEN_2022_PROGRAM_ID);
@@ -280,15 +280,15 @@ async function main() {
   console.log(`  Reserve: ${solUsdcReserve.toBase58()}`);
 
   // Step 4: Configure both
-  console.log("\n=== Step 4: Configure deUSX Reserve ===");
-  await configureReserve(conn, auth, deusxReserve, deusxOracle, "deUSX");
+  console.log("\n=== Step 4: Configure ceUSX Reserve ===");
+  await configureReserve(conn, auth, deusxReserve, deusxOracle, "ceUSX");
 
   console.log("\n=== Step 5: Configure Solstice USDC Reserve ===");
   await configureReserve(conn, auth, solUsdcReserve, solUsdcOracle, "sUSDC");
 
   // Step 6: Verify RefreshReserve simulates
   console.log("\n=== Step 6: Verify RefreshReserve ===");
-  for (const [name, reserve, oracle] of [["deUSX", deusxReserve, deusxOracle], ["sUSDC", solUsdcReserve, solUsdcOracle]] as const) {
+  for (const [name, reserve, oracle] of [["ceUSX", deusxReserve, deusxOracle], ["sUSDC", solUsdcReserve, solUsdcOracle]] as const) {
     const tx = new Transaction();
     tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 }));
     tx.add({ programId: KLEND, data: disc("refresh_reserve"), keys: [
@@ -306,8 +306,8 @@ async function main() {
   const config = {
     market: MARKET.toBase58(),
     addedReserves: {
-      deUSX: {
-        name: "deUSX",
+      ceUSX: {
+        name: "ceUSX",
         reserve: deusxReserve.toBase58(),
         mint: DEUSX.toBase58(),
         underlying: EUSX.toBase58(),
@@ -335,12 +335,12 @@ async function main() {
   console.log("\n╔══════════════════════════════════════════════╗");
   console.log("║  Migration complete                           ║");
   console.log("╚══════════════════════════════════════════════╝");
-  console.log(`  deUSX reserve:  ${deusxReserve.toBase58()}`);
+  console.log(`  ceUSX reserve:  ${deusxReserve.toBase58()}`);
   console.log(`  sUSDC reserve:  ${solUsdcReserve.toBase58()}`);
   console.log(`  Config:         ${outPath}`);
   console.log("");
   console.log("Next: rerun the playground — discoverMarketReserves will pick up the");
-  console.log("new reserves automatically. Add deUSX/sUSDC entries to KNOWN_MINTS in");
+  console.log("new reserves automatically. Add ceUSX/sUSDC entries to KNOWN_MINTS in");
   console.log("LendingPositionTab.tsx to attach friendly symbols + token program.");
 }
 

@@ -2,10 +2,10 @@
  * Kamino Full Lending Flow — Fork Integration Test
  *
  * End-to-end proof that KYC-gated tokens work with Kamino Lend V2:
- *   1. Create dUSDY via governor (Token-2022 + confidential transfers)
+ *   1. Create cUSDY via governor (Token-2022 + confidential transfers)
  *   2. Create klend market with 95% LTV
  *   3. Configure reserves with real Pyth oracle feeds
- *   4. KYC'd user deposits dUSDY collateral
+ *   4. KYC'd user deposits cUSDY collateral
  *   5. KYC'd user borrows USDC against it
  *   6. Verify positions on-chain
  *
@@ -381,7 +381,7 @@ describe("kamino-full-flow (mainnet fork)", () => {
   let mainnetAvailable = false;
   let LENDING_MARKET_SIZE = 4856;
 
-  // ---- dUSDY state ----
+  // ---- cUSDY state ----
   const dUsdyMintKeypair = Keypair.generate();
   let mintConfigPda: PublicKey;
   let mintAuthorityPda: PublicKey;
@@ -449,10 +449,10 @@ describe("kamino-full-flow (mainnet fork)", () => {
   });
 
   // =========================================================================
-  // Step 1 — Create dUSDY (KYC-gated Token-2022)
+  // Step 1 — Create cUSDY (KYC-gated Token-2022)
   // =========================================================================
 
-  it("creates dUSDY mint, whitelists operator, mints 1000 dUSDY", async () => {
+  it("creates cUSDY mint, whitelists operator, mints 1000 cUSDY", async () => {
     // Create mint
     await deltaMintProgram.methods.initializeMint(6)
       .accounts({
@@ -471,14 +471,14 @@ describe("kamino-full-flow (mainnet fork)", () => {
         systemProgram: SystemProgram.programId,
       }).rpc();
 
-    // Create ATA + mint 1000 dUSDY
+    // Create ATA + mint 1000 cUSDY
     const ata = getAssociatedTokenAddressSync(
       dUsdyMintKeypair.publicKey, provider.wallet.publicKey, false, TOKEN_2022_PROGRAM_ID);
     const createAtaIx = createAssociatedTokenAccountInstruction(
       provider.wallet.publicKey, ata, provider.wallet.publicKey,
       dUsdyMintKeypair.publicKey, TOKEN_2022_PROGRAM_ID);
 
-    await deltaMintProgram.methods.mintTo(new BN(1_000_000_000)) // 1000 dUSDY
+    await deltaMintProgram.methods.mintTo(new BN(1_000_000_000)) // 1000 cUSDY
       .accounts({
         authority: provider.wallet.publicKey, mintConfig: mintConfigPda,
         mint: dUsdyMintKeypair.publicKey, mintAuthority: mintAuthorityPda,
@@ -489,14 +489,14 @@ describe("kamino-full-flow (mainnet fork)", () => {
 
     const info = await provider.connection.getAccountInfo(ata);
     expect(Number(info!.data.readBigUInt64LE(64))).to.equal(1_000_000_000);
-    console.log("    1000 dUSDY minted to KYC'd operator");
+    console.log("    1000 cUSDY minted to KYC'd operator");
   });
 
   // =========================================================================
   // Step 2 — Create klend market + reserves
   // =========================================================================
 
-  it("creates klend market with dUSDY + USDC reserves", function () {
+  it("creates klend market with cUSDY + USDC reserves", function () {
     if (!mainnetAvailable) return this.skip();
     return (async () => {
       const owner = provider.wallet.publicKey;
@@ -514,7 +514,7 @@ describe("kamino-full-flow (mainnet fork)", () => {
         klendWorks = true;
         console.log(`    Market: ${marketKeypair.publicKey.toBase58()}`);
 
-        // dUSDY reserve
+        // cUSDY reserve
         const reserveRent = await provider.connection.getMinimumBalanceForRentExemption(RESERVE_ACCOUNT_SIZE);
         const dusdyAta = getAssociatedTokenAddressSync(
           dUsdyMintKeypair.publicKey, owner, false, TOKEN_2022_PROGRAM_ID);
@@ -527,7 +527,7 @@ describe("kamino-full-flow (mainnet fork)", () => {
           buildInitReserveIx(owner, marketKeypair.publicKey, dUsdyReserveKeypair.publicKey,
             dUsdyMintKeypair.publicKey, dusdyAta, TOKEN_2022_PROGRAM_ID),
         ), [dUsdyReserveKeypair]);
-        console.log(`    dUSDY reserve: ${dUsdyReserveKeypair.publicKey.toBase58()}`);
+        console.log(`    cUSDY reserve: ${dUsdyReserveKeypair.publicKey.toBase58()}`);
 
         // USDC reserve
         const usdcAta = getAssociatedTokenAddressSync(USDC_MINT, owner, false, TOKEN_PROGRAM_ID);
@@ -554,7 +554,7 @@ describe("kamino-full-flow (mainnet fork)", () => {
   // Step 3 — Configure reserves: 95% LTV, oracles, limits
   // =========================================================================
 
-  it("configures dUSDY reserve: 95% LTV, Pyth oracle, deposit limit", function () {
+  it("configures cUSDY reserve: 95% LTV, Pyth oracle, deposit limit", function () {
     if (!klendWorks) return this.skip();
     return (async () => {
       const owner = provider.wallet.publicKey;
@@ -582,14 +582,14 @@ describe("kamino-full-flow (mainnet fork)", () => {
           CONFIG_MODE.UpdatePythOracle, pubkeyBuf(PYTH_USDY_PRICE)),
       ));
 
-      // Set deposit limit: 1M dUSDY (6 decimals)
+      // Set deposit limit: 1M cUSDY (6 decimals)
       await provider.sendAndConfirm(new Transaction().add(
         ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
         buildUpdateReserveConfigIx(owner, market, reserve,
           CONFIG_MODE.UpdateDepositLimit, u64Buf(BigInt(1_000_000_000_000))),
       ));
 
-      console.log("    dUSDY reserve configured: LTV=95%, Liq=97%, Pyth oracle set");
+      console.log("    cUSDY reserve configured: LTV=95%, Liq=97%, Pyth oracle set");
     })();
   });
 
@@ -626,10 +626,10 @@ describe("kamino-full-flow (mainnet fork)", () => {
   });
 
   // =========================================================================
-  // Step 4 — User creates obligation, deposits dUSDY collateral
+  // Step 4 — User creates obligation, deposits cUSDY collateral
   // =========================================================================
 
-  it("creates user obligation and deposits 500 dUSDY collateral", function () {
+  it("creates user obligation and deposits 500 cUSDY collateral", function () {
     if (!klendWorks) return this.skip();
     return (async () => {
       const owner = provider.wallet.publicKey;
@@ -663,7 +663,7 @@ describe("kamino-full-flow (mainnet fork)", () => {
         buildRefreshReserveIx(dUsdyReserveKeypair.publicKey, market, PYTH_USDY_PRICE),
       ));
 
-      // Deposit 500 dUSDY
+      // Deposit 500 cUSDY
       const dusdyAta = getAssociatedTokenAddressSync(
         dUsdyMintKeypair.publicKey, owner, false, TOKEN_2022_PROGRAM_ID);
       await provider.sendAndConfirm(new Transaction().add(
@@ -672,19 +672,19 @@ describe("kamino-full-flow (mainnet fork)", () => {
           owner, userObligationPda, market,
           dUsdyReserveKeypair.publicKey, dUsdyMintKeypair.publicKey,
           dusdyAta, TOKEN_2022_PROGRAM_ID,
-          BigInt(500_000_000), // 500 dUSDY
+          BigInt(500_000_000), // 500 cUSDY
         ),
       ));
 
-      console.log("    Deposited 500 dUSDY as collateral into obligation");
+      console.log("    Deposited 500 cUSDY as collateral into obligation");
     })();
   });
 
   // =========================================================================
-  // Step 5 — User borrows USDC against dUSDY collateral
+  // Step 5 — User borrows USDC against cUSDY collateral
   // =========================================================================
 
-  it("borrows 400 USDC against dUSDY collateral (80% utilization at 95% LTV)", function () {
+  it("borrows 400 USDC against cUSDY collateral (80% utilization at 95% LTV)", function () {
     if (!klendWorks) return this.skip();
     return (async () => {
       const owner = provider.wallet.publicKey;
@@ -715,7 +715,7 @@ describe("kamino-full-flow (mainnet fork)", () => {
       const usdcBalance = Number(usdcInfo!.data.readBigUInt64LE(64));
       expect(usdcBalance).to.be.greaterThan(0);
 
-      console.log(`    Borrowed 400 USDC against 500 dUSDY collateral`);
+      console.log(`    Borrowed 400 USDC against 500 cUSDY collateral`);
       console.log(`    USDC balance: ${(usdcBalance / 1e6).toFixed(2)} USDC`);
     })();
   });
@@ -732,7 +732,7 @@ describe("kamino-full-flow (mainnet fork)", () => {
       expect(obligInfo).to.not.be.null;
       expect(obligInfo!.owner.toBase58()).to.equal(KLEND_PROGRAM_ID.toBase58());
 
-      // dUSDY balance decreased (500 deposited from 1000)
+      // cUSDY balance decreased (500 deposited from 1000)
       const dusdyAta = getAssociatedTokenAddressSync(
         dUsdyMintKeypair.publicKey, provider.wallet.publicKey, false, TOKEN_2022_PROGRAM_ID);
       const dusdyInfo = await provider.connection.getAccountInfo(dusdyAta);
@@ -743,14 +743,14 @@ describe("kamino-full-flow (mainnet fork)", () => {
       console.log("    === KYC-Gated Lending: PROOF OF CONCEPT ===");
       console.log("    ============================================");
       console.log(`    Market:           ${marketKeypair.publicKey.toBase58()}`);
-      console.log(`    dUSDY mint:       ${dUsdyMintKeypair.publicKey.toBase58()} (Token-2022 + CT)`);
-      console.log(`    dUSDY reserve:    ${dUsdyReserveKeypair.publicKey.toBase58()}`);
+      console.log(`    cUSDY mint:       ${dUsdyMintKeypair.publicKey.toBase58()} (Token-2022 + CT)`);
+      console.log(`    cUSDY reserve:    ${dUsdyReserveKeypair.publicKey.toBase58()}`);
       console.log(`    USDC reserve:     ${usdcReserveKeypair.publicKey.toBase58()}`);
       console.log(`    Obligation:       ${userObligationPda.toBase58()}`);
       console.log(`    LTV:              95%`);
-      console.log(`    Collateral:       500 dUSDY (KYC-minted)`);
+      console.log(`    Collateral:       500 cUSDY (KYC-minted)`);
       console.log(`    Borrowed:         400 USDC`);
-      console.log(`    Wallet dUSDY:     ${dusdyBalance / 1e6} remaining`);
+      console.log(`    Wallet cUSDY:     ${dusdyBalance / 1e6} remaining`);
       console.log(`    Oracle (USDY):    ${PYTH_USDY_PRICE.toBase58()}`);
       console.log(`    Oracle (USDC):    ${PYTH_USDC_PRICE.toBase58()}`);
       console.log("    ============================================");

@@ -159,7 +159,7 @@
       "name": "add_liquidator",
       "docs": [
         "Adds a wallet as an approved liquidator.",
-        "Liquidators can receive dUSDY collateral during Kamino liquidations",
+        "Liquidators can receive cUSDY collateral during Kamino liquidations",
         "without going through full KYC — they are pre-vetted bot operators."
       ],
       "discriminator": [

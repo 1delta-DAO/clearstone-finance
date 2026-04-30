@@ -108,7 +108,7 @@ export default function OraclePanel() {
         }
       } catch {}
 
-      // Load dUSDY oracle (legacy)
+      // Load cUSDY oracle (legacy)
       try {
         const info = await connection.getAccountInfo(config.oracles.dUsdyOracle);
         if (info) {
@@ -118,7 +118,7 @@ export default function OraclePanel() {
           const usd = Number(price) * Math.pow(10, expo);
           results.push({
             address: config.oracles.dUsdyOracle.toBase58(),
-            label: "dUSDY/USD (legacy)",
+            label: "cUSDY/USD (legacy)",
             price: "$" + usd.toFixed(4),
             lastUpdate: new Date(Number(d.readBigInt64LE(93)) * 1000).toISOString().replace("T", " ").slice(0, 19),
           });
@@ -248,11 +248,14 @@ export default function OraclePanel() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h2 className="text-lg font-semibold">TradeDesk Oracle Manager</h2>
-      <p className="opacity-50 text-sm">
-        Create and manage PriceUpdateV2 oracles for klend integration.
-        These oracles are owned by the TradeDesk program and accepted by klend's Pyth parser.
-      </p>
+      <div>
+        <span className="eyebrow">Operator</span>
+        <h2 className="text-2xl mt-1">Oracles</h2>
+        <p className="text-sm text-base-content/55 mt-1">
+          Create and manage PriceUpdateV2 oracles for klend. Owned by the TradeDesk program and
+          accepted by klend's Pyth parser.
+        </p>
+      </div>
 
       {status && (
         <div className={`alert text-sm break-all ${status.type === "err" ? "alert-error" : status.type === "ok" ? "alert-success" : "alert-info"}`}>
@@ -261,9 +264,9 @@ export default function OraclePanel() {
       )}
 
       {/* Existing Feeds */}
-      <div className="card bg-base-200 border border-base-300 shadow-sm">
+      <div className="panel">
         <div className="card-body p-6 gap-4">
-          <h3 className="text-base font-semibold">Active Feeds</h3>
+          <h3 className="text-base">Active Feeds</h3>
           {feeds.length === 0 ? (
             <p className="opacity-40">No feeds found. Create one below.</p>
           ) : (
@@ -300,9 +303,9 @@ export default function OraclePanel() {
       </div>
 
       {/* Create New Oracle */}
-      <div className="card bg-base-200 border border-base-300 shadow-sm">
+      <div className="panel">
         <div className="card-body p-6 gap-4">
-          <h3 className="text-base font-semibold">Create PriceUpdateV2 Oracle</h3>
+          <h3 className="text-base">Create PriceUpdateV2 Oracle</h3>
           <div className="flex gap-3 mb-2">
             <input
               placeholder="Label (e.g. USDY/USD)"
@@ -332,9 +335,9 @@ export default function OraclePanel() {
       </div>
 
       {/* Update Price */}
-      <div className="card bg-base-200 border border-base-300 shadow-sm">
+      <div className="panel">
         <div className="card-body p-6 gap-4">
-          <h3 className="text-base font-semibold">Update Oracle Price</h3>
+          <h3 className="text-base">Update Oracle Price</h3>
           <div className="flex gap-3 mb-2">
             <input
               placeholder="Oracle address"
@@ -364,7 +367,7 @@ export default function OraclePanel() {
       </div>
 
       {/* Info */}
-      <div className="card bg-base-200 border border-base-300 shadow-sm">
+      <div className="panel">
         <div className="card-body p-6 gap-4">
           <h3 className="text-sm font-semibold mb-2">How it works</h3>
           <ul className="list-disc pl-5 text-xs opacity-50 leading-relaxed">

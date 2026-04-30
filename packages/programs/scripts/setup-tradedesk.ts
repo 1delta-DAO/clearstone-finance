@@ -71,7 +71,7 @@ async function main() {
   const feeds = [
     { label: "USDY/USD", base: "USDY", quote: "USD", price: 108000000, expo: -8 }, // $1.08
     { label: "USDC/USD", base: "USDC", quote: "USD", price: 100000000, expo: -8 }, // $1.00
-    { label: "dUSDY/USD", base: "dUSDY", quote: "USD", price: 108000000, expo: -8 }, // $1.08
+    { label: "cUSDY/USD", base: "cUSDY", quote: "USD", price: 108000000, expo: -8 }, // $1.08
   ];
 
   const feedAddresses: Record<string, string> = {};

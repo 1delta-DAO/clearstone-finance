@@ -1,0 +1,40 @@
+{
+  "cluster": "devnet",
+  "market": "EVw8B9WC2AX5ScCwkYJF2mZz6RdHLQZtoDeKChdMiz2E",
+  "reserves": {
+    "csSOL": "eCrKcmHytENDieb3Ff5YLY7ATsmduXB4EDT4u6dPX9w",
+    "wSOL": "CaPUL8sijx9Qw32Ao2PMdotEKqQLMneA5ZvRnvsa6VF8",
+    "csSOL_WT": "94UQxxQfEVPCCpQsh9uyakHsPX9QqPoCBZnjHz4RU4iw",
+    "ceUSX": "88XHsosaqq3bV9MW3gLtn3RozHuVKnvRcSbEq8fPcmXU",
+    "sUSDC": "78kkPNAjS7pq9yk59spMGKYcFLAA3m2xHvNBokk8BFy9"
+  },
+  "oracles": {
+    "csSOL": "3Sx8WJC7y1kokmsu7SoxfJW8nQJktkuQ5fKK8icxPw3P",
+    "wSOL": "7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE",
+    "csSOL_WT": "3Sx8WJC7y1kokmsu7SoxfJW8nQJktkuQ5fKK8icxPw3P",
+    "ceUSX": "3L8kkp8G6gxBmr7wdYJxvofEWxtUtUUAGJSokSLwzmyW",
+    "sUSDC": "ETLQGfwHVfCYSqEG51ckf6h581e3k5CyoMnfz2WW45eD"
+  },
+  "elevationGroups": {
+    "1": {
+      "name": "Stables",
+      "ltv": 90,
+      "liqThreshold": 92,
+      "debtReserve": "78kkPNAjS7pq9yk59spMGKYcFLAA3m2xHvNBokk8BFy9",
+      "collateral": [
+        "ceUSX"
+      ]
+    },
+    "2": {
+      "name": "LST/SOL",
+      "ltv": 90,
+      "liqThreshold": 92,
+      "debtReserve": "CaPUL8sijx9Qw32Ao2PMdotEKqQLMneA5ZvRnvsa6VF8",
+      "collateral": [
+        "csSOL",
+        "csSOL-WT"
+      ]
+    }
+  },
+  "createdAt": "2026-04-30T18:56:51.516Z"
+}

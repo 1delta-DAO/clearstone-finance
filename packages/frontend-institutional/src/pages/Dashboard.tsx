@@ -47,55 +47,47 @@ export default function Dashboard() {
   return (
     <div className="space-y-8">
       <div>
-        <h2 className="text-2xl font-bold">Portfolio Overview</h2>
-        <p className="text-sm text-base-content/50 mt-1">Real-time view of your institutional lending positions</p>
+        <span className="eyebrow">Portfolio</span>
+        <h2 className="text-3xl mt-2">Overview</h2>
+        <p className="text-sm text-base-content/55 mt-1">Real-time view of your institutional lending positions.</p>
       </div>
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="card bg-base-200 border border-base-300">
-          <div className="card-body p-5 gap-1">
-            <div className="text-xs text-base-content/50 uppercase tracking-wide">Total Assets</div>
-            <div className="text-2xl font-bold text-primary">
-              {loading ? <span className="loading loading-dots loading-sm" /> :
-                "$" + totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </div>
-            <div className="text-xs text-base-content/40">Across all tokens</div>
+        <div className="panel p-5 space-y-1">
+          <div className="eyebrow">Total Assets</div>
+          <div className="figure text-3xl text-primary">
+            {loading ? <span className="loading loading-dots loading-sm" /> :
+              "$" + totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
+          <div className="text-xs text-base-content/45">Across all tokens</div>
         </div>
 
-        <div className="card bg-base-200 border border-base-300">
-          <div className="card-body p-5 gap-1">
-            <div className="text-xs text-base-content/50 uppercase tracking-wide">Collateral Deposited</div>
-            <div className="text-2xl font-bold text-success">$0.00</div>
-            <div className="text-xs text-base-content/40">In klend market</div>
-          </div>
+        <div className="panel p-5 space-y-1">
+          <div className="eyebrow">Collateral Deposited</div>
+          <div className="figure text-3xl text-success">$0.00</div>
+          <div className="text-xs text-base-content/45">In klend market</div>
         </div>
 
-        <div className="card bg-base-200 border border-base-300">
-          <div className="card-body p-5 gap-1">
-            <div className="text-xs text-base-content/50 uppercase tracking-wide">Outstanding Borrows</div>
-            <div className="text-2xl font-bold text-warning">$0.00</div>
-            <div className="text-xs text-base-content/40">USDC borrowed</div>
-          </div>
+        <div className="panel p-5 space-y-1">
+          <div className="eyebrow">Outstanding Borrows</div>
+          <div className="figure text-3xl text-warning">$0.00</div>
+          <div className="text-xs text-base-content/45">USDC borrowed</div>
         </div>
 
-        <div className="card bg-base-200 border border-base-300">
-          <div className="card-body p-5 gap-1">
-            <div className="text-xs text-base-content/50 uppercase tracking-wide">Health Factor</div>
-            <div className="text-2xl font-bold text-success">--</div>
-            <div className="text-xs text-base-content/40">No active positions</div>
-          </div>
+        <div className="panel p-5 space-y-1">
+          <div className="eyebrow">Health Factor</div>
+          <div className="figure text-3xl text-success">--</div>
+          <div className="text-xs text-base-content/45">No active positions</div>
         </div>
       </div>
 
       {/* Token Balances */}
-      <div className="card bg-base-200 border border-base-300">
-        <div className="card-body p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-bold text-lg">Wallet Balances</h3>
-            <div className="badge badge-ghost badge-sm font-mono">{solBalance.toFixed(2)} SOL</div>
-          </div>
+      <div className="panel p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg">Wallet Balances</h3>
+          <div className="badge badge-ghost badge-sm num">{solBalance.toFixed(2)} SOL</div>
+        </div>
 
           {loading ? (
             <div className="flex justify-center py-8">
@@ -140,36 +132,33 @@ export default function Dashboard() {
               </table>
             </div>
           )}
-        </div>
       </div>
 
       {/* Lending Flow */}
-      <div className="card bg-base-200 border border-base-300">
-        <div className="card-body p-6">
-          <h3 className="font-bold text-lg mb-4">Institutional Lending Flow</h3>
-          <ul className="steps steps-horizontal w-full text-xs">
-            <li className="step step-primary">Get USDC</li>
-            <li className="step">Mint USX</li>
-            <li className="step">Lock for eUSX</li>
-            <li className="step">KYC Wrap</li>
-            <li className="step">Deposit</li>
-            <li className="step">Borrow</li>
-          </ul>
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-base-300 rounded-lg p-4 space-y-1">
-              <div className="font-semibold text-sm text-success">Earn on Collateral</div>
-              <p className="text-xs text-base-content/50">
-                eUSX earns ~8-12% APY from funding rate arbitrage, hedged staking,
-                and tokenized US Treasuries while locked as collateral.
-              </p>
-            </div>
-            <div className="bg-base-300 rounded-lg p-4 space-y-1">
-              <div className="font-semibold text-sm text-warning">Carry Trade</div>
-              <p className="text-xs text-base-content/50">
-                Borrow USDC at 0.5–20% APY against collateral earning ~8–12%.
-                Net carry: up to ~10% APY profit on deposited capital.
-              </p>
-            </div>
+      <div className="panel p-6">
+        <h3 className="text-lg mb-4">Institutional Lending Flow</h3>
+        <ul className="steps steps-horizontal w-full text-xs">
+          <li className="step step-primary">Get USDC</li>
+          <li className="step">Mint USX</li>
+          <li className="step">Lock for eUSX</li>
+          <li className="step">KYC Wrap</li>
+          <li className="step">Deposit</li>
+          <li className="step">Borrow</li>
+        </ul>
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="panel-flat p-4 space-y-1">
+            <div className="font-semibold text-sm text-success">Earn on Collateral</div>
+            <p className="text-xs text-base-content/55">
+              eUSX earns ~8–12% APY from funding rate arbitrage, hedged staking,
+              and tokenized US Treasuries while locked as collateral.
+            </p>
+          </div>
+          <div className="panel-flat p-4 space-y-1">
+            <div className="font-semibold text-sm text-warning">Carry Trade</div>
+            <p className="text-xs text-base-content/55">
+              Borrow USDC at 0.5–20% APY against collateral earning ~8–12%.
+              Net carry: up to ~10% APY profit on deposited capital.
+            </p>
           </div>
         </div>
       </div>

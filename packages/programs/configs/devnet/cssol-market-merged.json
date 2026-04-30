@@ -1,8 +1,8 @@
 {
   "market": "2gRy7fYaPe8ooB1HqTfa2sJeJZ8KdVebhj88tgShyejW",
   "addedReserves": {
-    "deUSX": {
-      "name": "deUSX",
+    "ceUSX": {
+      "name": "ceUSX",
       "reserve": "yBZB2WHSizBs6Mg7GVPBYqm6L7vfcyC5UzJ2KU4YG1U",
       "mint": "8Uy7rmtAZvnQA1SuYZJKKBXFovHDPEYXiYH3H6iQMRwT",
       "underlying": "Gkt9h4QWpPBDtbaF5HvYKCc87H5WCRTUtMf77HdTGHBt",

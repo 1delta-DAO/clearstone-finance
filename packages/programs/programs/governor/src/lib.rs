@@ -1297,6 +1297,283 @@ pub mod governor {
 
         Ok(())
     }
+
+    // -----------------------------------------------------------------------
+    // Native-wrap pool (cSOL, cUSDC, …)
+    //
+    // A simpler pool than the Jito-vault staker pool: 1:1 KYC-wrapper of an
+    // SPL/SPL-2022 underlying. Mints the wrapper on `wrap_native`, burns
+    // it on `unwrap_native`. Used for the loan-asset side of the credit
+    // trade (cSOL ↔ wSOL, cUSDC ↔ Solstice USDC, etc.).
+    //
+    // Seeds: `[b"native_pool", wrapped_mint.as_ref()]` — distinct from
+    // the staker pool's `[b"pool", underlying_mint]` to avoid PDA
+    // collisions when underlying = wSOL (which the csSOL pool already
+    // uses).
+    // -----------------------------------------------------------------------
+
+    /// Create a native-wrap pool. The wrapped mint must already exist
+    /// (delta-mint MintConfig set up separately via `initialize_mint`).
+    /// Same activate-wrapping flow as the staker pool — call
+    /// `activate_wrapping_native` to transfer delta-mint authority to
+    /// the pool PDA.
+    pub fn initialize_native_pool(
+        ctx: Context<InitializeNativePool>,
+        params: NativePoolParams,
+    ) -> Result<()> {
+        let pool_key = ctx.accounts.pool_config.key();
+        let underlying_key = ctx.accounts.underlying_mint.key();
+        let wrapped_key = ctx.accounts.wrapped_mint.key();
+        let dm_config_key = ctx.accounts.dm_mint_config.key();
+        let authority_key = ctx.accounts.authority.key();
+
+        let pool = &mut ctx.accounts.pool_config;
+        pool.authority = authority_key;
+        pool.underlying_mint = underlying_key;
+        pool.underlying_oracle = params.underlying_oracle;
+        pool.borrow_mint = Pubkey::default();
+        pool.borrow_oracle = Pubkey::default();
+        pool.wrapped_mint = wrapped_key;
+        pool.dm_mint_config = dm_config_key;
+        pool.lending_market = Pubkey::default();
+        pool.collateral_reserve = Pubkey::default();
+        pool.borrow_reserve = Pubkey::default();
+        pool.decimals = params.decimals;
+        pool.ltv_pct = 0;
+        pool.liquidation_threshold_pct = 0;
+        pool.bump = ctx.bumps.pool_config;
+        pool.gatekeeper_network = Pubkey::default();
+        pool.elevation_group = 0;
+        pool.status = PoolStatus::Active; // no separate "register lending market" step here
+
+        // Atomically initialize the wrapped mint via delta-mint CPI —
+        // mirrors the staker pool's `initialize_pool` flow. After this
+        // the mint exists with delta-mint as authority and the deployer
+        // as first-tier authority. Call `activate_wrapping_native` to
+        // hand authority off to the pool PDA once whitelisting is set.
+        delta_cpi::initialize_mint(
+            CpiContext::new(
+                ctx.accounts.delta_mint_program.to_account_info(),
+                delta_accounts::InitializeMint {
+                    authority: ctx.accounts.authority.to_account_info(),
+                    mint: ctx.accounts.wrapped_mint.to_account_info(),
+                    mint_config: ctx.accounts.dm_mint_config.to_account_info(),
+                    mint_authority: ctx.accounts.dm_mint_authority.to_account_info(),
+                    token_program: ctx.accounts.token_program.to_account_info(),
+                    system_program: ctx.accounts.system_program.to_account_info(),
+                },
+            ),
+            params.decimals,
+        )?;
+
+        emit!(PoolCreatedEvent {
+            pool: pool_key,
+            underlying_mint: underlying_key,
+            wrapped_mint: wrapped_key,
+            authority: authority_key,
+        });
+
+        Ok(())
+    }
+
+    /// Wrap underlying (e.g. wSOL) → KYC wrapper (e.g. cSOL) 1:1.
+    /// Whitelist check fires inside delta-mint's `mint_to`.
+    pub fn wrap_native(ctx: Context<WrapNative>, amount: u64) -> Result<()> {
+        require!(
+            ctx.accounts.pool_config.status == PoolStatus::Active,
+            GovernorError::PoolNotActive
+        );
+        require!(amount > 0, GovernorError::InvalidPoolStatus);
+
+        // 1. user_underlying_ata → pool_vault (transfer_checked enforces mint+decimals)
+        token_interface::transfer_checked(
+            CpiContext::new(
+                ctx.accounts.underlying_token_program.to_account_info(),
+                token_interface::TransferChecked {
+                    from: ctx.accounts.user_underlying_ata.to_account_info(),
+                    mint: ctx.accounts.underlying_mint.to_account_info(),
+                    to: ctx.accounts.vault.to_account_info(),
+                    authority: ctx.accounts.user.to_account_info(),
+                },
+            ),
+            amount,
+            ctx.accounts.pool_config.decimals,
+        )?;
+
+        // 2. Mint wrapper to user via delta-mint CPI; pool PDA signs as
+        //    delta-mint authority post-`activate_wrapping`.
+        let wrapped_key = ctx.accounts.pool_config.wrapped_mint;
+        let bump = ctx.accounts.pool_config.bump;
+        let pool_seeds: &[&[u8]] = &[b"native_pool", wrapped_key.as_ref(), &[bump]];
+
+        delta_cpi::mint_to(
+            CpiContext::new_with_signer(
+                ctx.accounts.delta_mint_program.to_account_info(),
+                delta_accounts::MintTokens {
+                    authority: ctx.accounts.pool_config.to_account_info(),
+                    mint_config: ctx.accounts.dm_mint_config.to_account_info(),
+                    mint: ctx.accounts.wrapped_mint.to_account_info(),
+                    mint_authority: ctx.accounts.dm_mint_authority.to_account_info(),
+                    whitelist_entry: ctx.accounts.whitelist_entry.to_account_info(),
+                    destination: ctx.accounts.user_wrapped_ata.to_account_info(),
+                    token_program: ctx.accounts.wrapped_token_program.to_account_info(),
+                },
+                &[pool_seeds],
+            ),
+            amount,
+        )?;
+
+        emit!(WrapNativeEvent {
+            pool: ctx.accounts.pool_config.key(),
+            user: ctx.accounts.user.key(),
+            underlying_amount: amount,
+            wrapped_amount: amount,
+        });
+
+        Ok(())
+    }
+
+    /// Unwrap wrapper → underlying 1:1. No whitelist check on burn —
+    /// the wrapper had to pass through KYC to be in circulation, and
+    /// the borrower path of the credit trade depends on this being
+    /// unconditionally callable (so klend-borrowed cSOL can be
+    /// auto-unwrapped to wSOL in the same tx).
+    pub fn unwrap_native(ctx: Context<UnwrapNative>, amount: u64) -> Result<()> {
+        require!(
+            ctx.accounts.pool_config.status == PoolStatus::Active,
+            GovernorError::PoolNotActive
+        );
+        require!(amount > 0, GovernorError::InvalidPoolStatus);
+
+        // 1. Burn wrapper from user
+        token_interface::burn(
+            CpiContext::new(
+                ctx.accounts.wrapped_token_program.to_account_info(),
+                token_interface::Burn {
+                    mint: ctx.accounts.wrapped_mint.to_account_info(),
+                    from: ctx.accounts.user_wrapped_ata.to_account_info(),
+                    authority: ctx.accounts.user.to_account_info(),
+                },
+            ),
+            amount,
+        )?;
+
+        // 2. Transfer underlying: vault → recipient (signed by pool PDA)
+        let wrapped_key = ctx.accounts.pool_config.wrapped_mint;
+        let bump = ctx.accounts.pool_config.bump;
+        let pool_seeds: &[&[u8]] = &[b"native_pool", wrapped_key.as_ref(), &[bump]];
+
+        token_interface::transfer_checked(
+            CpiContext::new_with_signer(
+                ctx.accounts.underlying_token_program.to_account_info(),
+                token_interface::TransferChecked {
+                    from: ctx.accounts.vault.to_account_info(),
+                    mint: ctx.accounts.underlying_mint.to_account_info(),
+                    to: ctx.accounts.recipient_underlying_ata.to_account_info(),
+                    authority: ctx.accounts.pool_config.to_account_info(),
+                },
+                &[pool_seeds],
+            ),
+            amount,
+            ctx.accounts.pool_config.decimals,
+        )?;
+
+        emit!(UnwrapNativeEvent {
+            pool: ctx.accounts.pool_config.key(),
+            user: ctx.accounts.user.key(),
+            underlying_amount: amount,
+            wrapped_amount: amount,
+        });
+
+        Ok(())
+    }
+
+    /// Whitelist a wallet on a native-wrap pool. Mirrors
+    /// `add_participant_via_pool` for the native_pool seed shape so
+    /// post-activation pools (where the pool PDA is delta-mint
+    /// co_authority) can issue whitelist entries via CPI.
+    pub fn add_participant_native_via_pool(
+        ctx: Context<AddParticipantNativeViaPool>,
+        role: ParticipantRole,
+    ) -> Result<()> {
+        let wrapped_key = ctx.accounts.pool_config.wrapped_mint;
+        let bump = ctx.accounts.pool_config.bump;
+        let seeds: &[&[u8]] = &[b"native_pool", wrapped_key.as_ref(), &[bump]];
+
+        let cpi_program = ctx.accounts.delta_mint_program.to_account_info();
+        let cpi_accounts = delta_accounts::AddToWhitelistCoAuth {
+            co_authority: ctx.accounts.pool_config.to_account_info(),
+            payer: ctx.accounts.authority.to_account_info(),
+            mint_config: ctx.accounts.dm_mint_config.to_account_info(),
+            wallet: ctx.accounts.wallet.to_account_info(),
+            whitelist_entry: ctx.accounts.whitelist_entry.to_account_info(),
+            system_program: ctx.accounts.system_program.to_account_info(),
+        };
+
+        match role {
+            ParticipantRole::Holder => delta_cpi::add_to_whitelist_with_co_authority(
+                CpiContext::new_with_signer(cpi_program, cpi_accounts, &[seeds]),
+            )?,
+            ParticipantRole::Liquidator => delta_cpi::add_liquidator_with_co_authority(
+                CpiContext::new_with_signer(cpi_program, cpi_accounts, &[seeds]),
+            )?,
+            ParticipantRole::Escrow => delta_cpi::add_escrow_with_co_authority(
+                CpiContext::new_with_signer(cpi_program, cpi_accounts, &[seeds]),
+            )?,
+        }
+        Ok(())
+    }
+
+    /// Mint a wrapper to a whitelisted destination via the native pool.
+    /// Used by the bootstrap to seed klend reserves with ≥1 unit of the
+    /// wrapper before `init_reserve`.
+    pub fn mint_wrapped_native(ctx: Context<MintWrappedNative>, amount: u64) -> Result<()> {
+        require!(
+            ctx.accounts.pool_config.status == PoolStatus::Active,
+            GovernorError::PoolNotActive
+        );
+        require!(amount > 0, GovernorError::InvalidPoolStatus);
+
+        let wrapped_key = ctx.accounts.pool_config.wrapped_mint;
+        let bump = ctx.accounts.pool_config.bump;
+        let seeds: &[&[u8]] = &[b"native_pool", wrapped_key.as_ref(), &[bump]];
+
+        delta_cpi::mint_to(
+            CpiContext::new_with_signer(
+                ctx.accounts.delta_mint_program.to_account_info(),
+                delta_accounts::MintTokens {
+                    authority: ctx.accounts.pool_config.to_account_info(),
+                    mint_config: ctx.accounts.dm_mint_config.to_account_info(),
+                    mint: ctx.accounts.wrapped_mint.to_account_info(),
+                    mint_authority: ctx.accounts.dm_mint_authority.to_account_info(),
+                    whitelist_entry: ctx.accounts.whitelist_entry.to_account_info(),
+                    destination: ctx.accounts.destination.to_account_info(),
+                    token_program: ctx.accounts.token_program.to_account_info(),
+                },
+                &[seeds],
+            ),
+            amount,
+        )?;
+        Ok(())
+    }
+
+    /// Transfer delta-mint authority → native pool PDA.
+    /// Mirrors `activate_wrapping` for the staker pool.
+    pub fn activate_wrapping_native(ctx: Context<ActivateWrappingNative>) -> Result<()> {
+        let pool_key = ctx.accounts.pool_config.key();
+        delta_cpi::transfer_authority(
+            CpiContext::new(
+                ctx.accounts.delta_mint_program.to_account_info(),
+                delta_accounts::TransferAuthority {
+                    authority: ctx.accounts.authority.to_account_info(),
+                    mint_config: ctx.accounts.dm_mint_config.to_account_info(),
+                },
+            ),
+            pool_key,
+        )?;
+        msg!("Delta-mint authority transferred to native pool PDA: {}", pool_key);
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1548,6 +1825,222 @@ pub struct SelfRegister<'info> {
 
     pub delta_mint_program: Program<'info, DeltaMintProgram>,
     pub system_program: Program<'info, System>,
+}
+
+// ----------------------------------------------------------------------
+// Native-wrap pool accounts (cSOL, cUSDC, …)
+// ----------------------------------------------------------------------
+
+#[derive(Accounts)]
+pub struct InitializeNativePool<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + PoolConfig::INIT_SPACE,
+        seeds = [b"native_pool", wrapped_mint.key().as_ref()],
+        bump,
+    )]
+    pub pool_config: Account<'info, PoolConfig>,
+
+    /// CHECK: The underlying token mint (e.g. wSOL / Solstice USDC).
+    pub underlying_mint: UncheckedAccount<'info>,
+
+    /// Fresh wrapper mint keypair — initialized in this ix via
+    /// delta-mint CPI (mirrors the staker pool flow).
+    #[account(mut)]
+    pub wrapped_mint: Signer<'info>,
+
+    /// CHECK: delta-mint MintConfig PDA — created by delta-mint CPI.
+    #[account(mut)]
+    pub dm_mint_config: UncheckedAccount<'info>,
+
+    /// CHECK: delta-mint mint authority PDA — derived by delta-mint.
+    pub dm_mint_authority: UncheckedAccount<'info>,
+
+    pub delta_mint_program: Program<'info, DeltaMintProgram>,
+    pub token_program: Interface<'info, token_interface::TokenInterface>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct WrapNative<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"native_pool", pool_config.wrapped_mint.as_ref()],
+        bump = pool_config.bump,
+    )]
+    pub pool_config: Account<'info, PoolConfig>,
+
+    /// Underlying mint (e.g. wSOL).
+    #[account(address = pool_config.underlying_mint)]
+    pub underlying_mint: InterfaceAccount<'info, token_interface::Mint>,
+
+    /// User's underlying ATA (source).
+    #[account(mut)]
+    pub user_underlying_ata: InterfaceAccount<'info, token_interface::TokenAccount>,
+
+    /// Pool's underlying vault — token account owned by pool PDA. Created
+    /// externally before first wrap (associated token account is fine).
+    #[account(mut)]
+    pub vault: InterfaceAccount<'info, token_interface::TokenAccount>,
+
+    /// CHECK: Wrapper mint — address validated.
+    #[account(mut, address = pool_config.wrapped_mint)]
+    pub wrapped_mint: UncheckedAccount<'info>,
+
+    /// CHECK: delta-mint MintConfig.
+    #[account(address = pool_config.dm_mint_config)]
+    pub dm_mint_config: UncheckedAccount<'info>,
+
+    /// CHECK: delta-mint mint authority PDA.
+    pub dm_mint_authority: UncheckedAccount<'info>,
+
+    /// CHECK: User's whitelist entry — validated by delta-mint CPI.
+    pub whitelist_entry: UncheckedAccount<'info>,
+
+    /// CHECK: User's wrapper ATA (destination for minted wrappers).
+    #[account(mut)]
+    pub user_wrapped_ata: UncheckedAccount<'info>,
+
+    pub delta_mint_program: Program<'info, DeltaMintProgram>,
+    pub underlying_token_program: Interface<'info, token_interface::TokenInterface>,
+    pub wrapped_token_program: Interface<'info, token_interface::TokenInterface>,
+}
+
+#[derive(Accounts)]
+pub struct UnwrapNative<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"native_pool", pool_config.wrapped_mint.as_ref()],
+        bump = pool_config.bump,
+    )]
+    pub pool_config: Account<'info, PoolConfig>,
+
+    /// Underlying mint (e.g. wSOL).
+    #[account(address = pool_config.underlying_mint)]
+    pub underlying_mint: InterfaceAccount<'info, token_interface::Mint>,
+
+    /// CHECK: Wrapper mint — address validated.
+    #[account(mut, address = pool_config.wrapped_mint)]
+    pub wrapped_mint: UncheckedAccount<'info>,
+
+    /// User's wrapper ATA (source — burned).
+    #[account(mut)]
+    pub user_wrapped_ata: InterfaceAccount<'info, token_interface::TokenAccount>,
+
+    /// Pool's underlying vault — token account owned by pool PDA.
+    #[account(mut)]
+    pub vault: InterfaceAccount<'info, token_interface::TokenAccount>,
+
+    /// Recipient's underlying ATA (destination — credit-trade flow
+    /// usually passes user's own wSOL ATA so the auto-unwrap lands
+    /// in the user's wallet).
+    #[account(mut)]
+    pub recipient_underlying_ata: InterfaceAccount<'info, token_interface::TokenAccount>,
+
+    pub underlying_token_program: Interface<'info, token_interface::TokenInterface>,
+    pub wrapped_token_program: Interface<'info, token_interface::TokenInterface>,
+}
+
+#[derive(Accounts)]
+pub struct AddParticipantNativeViaPool<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"native_pool", pool_config.wrapped_mint.as_ref()],
+        bump = pool_config.bump,
+        constraint = is_authorized(
+            &authority.key(),
+            &pool_config.authority,
+            &pool_config.key(),
+            &admin_entry,
+        ) @ GovernorError::Unauthorized
+    )]
+    pub pool_config: Account<'info, PoolConfig>,
+
+    pub admin_entry: Option<Account<'info, AdminEntry>>,
+
+    /// CHECK: delta-mint MintConfig.
+    #[account(mut, address = pool_config.dm_mint_config)]
+    pub dm_mint_config: UncheckedAccount<'info>,
+
+    /// CHECK: The wallet to whitelist.
+    pub wallet: UncheckedAccount<'info>,
+
+    /// CHECK: The PDA created by delta-mint.
+    #[account(mut)]
+    pub whitelist_entry: UncheckedAccount<'info>,
+
+    pub delta_mint_program: Program<'info, DeltaMintProgram>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct MintWrappedNative<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"native_pool", pool_config.wrapped_mint.as_ref()],
+        bump = pool_config.bump,
+        constraint = is_authorized(
+            &authority.key(),
+            &pool_config.authority,
+            &pool_config.key(),
+            &admin_entry,
+        ) @ GovernorError::Unauthorized
+    )]
+    pub pool_config: Account<'info, PoolConfig>,
+
+    pub admin_entry: Option<Account<'info, AdminEntry>>,
+
+    /// CHECK: delta-mint MintConfig.
+    #[account(mut, address = pool_config.dm_mint_config)]
+    pub dm_mint_config: UncheckedAccount<'info>,
+
+    /// CHECK: Wrapper mint.
+    #[account(mut, address = pool_config.wrapped_mint)]
+    pub wrapped_mint: UncheckedAccount<'info>,
+
+    /// CHECK: delta-mint mint authority PDA.
+    pub dm_mint_authority: UncheckedAccount<'info>,
+
+    /// CHECK: Whitelist entry — validated by delta-mint CPI.
+    pub whitelist_entry: UncheckedAccount<'info>,
+
+    /// CHECK: Destination ATA.
+    #[account(mut)]
+    pub destination: UncheckedAccount<'info>,
+
+    pub delta_mint_program: Program<'info, DeltaMintProgram>,
+    pub token_program: Interface<'info, token_interface::TokenInterface>,
+}
+
+#[derive(Accounts)]
+pub struct ActivateWrappingNative<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(has_one = authority)]
+    pub pool_config: Account<'info, PoolConfig>,
+
+    /// CHECK: delta-mint MintConfig — authority validated by delta-mint CPI.
+    #[account(mut, address = pool_config.dm_mint_config)]
+    pub dm_mint_config: UncheckedAccount<'info>,
+
+    pub delta_mint_program: Program<'info, DeltaMintProgram>,
 }
 
 /// Activate wrapping — transfers delta-mint authority to pool PDA.
@@ -1869,6 +2362,15 @@ pub struct PoolParams {
     pub elevation_group: u8,
 }
 
+/// Init params for a native-wrap pool (cSOL, cUSDC, …). Slimmer than
+/// `PoolParams` because there's no klend market or borrow leg — just
+/// a 1:1 KYC wrapper.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct NativePoolParams {
+    pub underlying_oracle: Pubkey,
+    pub decimals: u8,
+}
+
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
 pub enum ParticipantRole {
     Holder,
@@ -1979,6 +2481,22 @@ pub struct WrapWithJitoVaultEvent {
 
 #[event]
 pub struct UnwrapEvent {
+    pub pool: Pubkey,
+    pub user: Pubkey,
+    pub underlying_amount: u64,
+    pub wrapped_amount: u64,
+}
+
+#[event]
+pub struct WrapNativeEvent {
+    pub pool: Pubkey,
+    pub user: Pubkey,
+    pub underlying_amount: u64,
+    pub wrapped_amount: u64,
+}
+
+#[event]
+pub struct UnwrapNativeEvent {
     pub pool: Pubkey,
     pub user: Pubkey,
     pub underlying_amount: u64,

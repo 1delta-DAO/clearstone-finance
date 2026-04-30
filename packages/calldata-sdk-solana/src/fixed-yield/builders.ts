@@ -76,7 +76,7 @@ export interface WrapperCommon {
   // Adapter side
   /** SY market PDA on the adapter (generic_exchange_rate_sy / kamino_sy_adapter). */
   syMarket: PublicKey;
-  /** Underlying base mint (e.g. dUSDY / kUSDC). */
+  /** Underlying base mint (e.g. cUSDY / kUSDC). */
   baseMint: PublicKey;
   /** SY mint (authority = sy_market PDA). */
   syMint: PublicKey;

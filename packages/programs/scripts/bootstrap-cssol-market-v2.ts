@@ -1,6 +1,6 @@
 /**
  * bootstrap-cssol-market-v2.ts — Fresh klend market with all five reserves
- * (csSOL, wSOL, csSOL-WT, deUSX, sUSDC) and both elevation groups
+ * (csSOL, wSOL, csSOL-WT, ceUSX, sUSDC) and both elevation groups
  * (1 = stables, 2 = LST/SOL) configured correctly from scratch.
  *
  * Why a v2 market?
@@ -17,8 +17,8 @@
  *
  *   1. createAccount + init_lending_market         (fresh market)
  *   2. createAccount + init_reserve × 5            (csSOL, wSOL, csSOL-WT,
- *                                                   deUSX, sUSDC)
- *   3. Mock-oracle PriceUpdateV2 accounts for deUSX ($1.08), sUSDC ($1)
+ *                                                   ceUSX, sUSDC)
+ *   3. Mock-oracle PriceUpdateV2 accounts for ceUSX ($1.08), sUSDC ($1)
  *   4. update_reserve_config phase-1 × 5
  *      (name, oracle, ltv, liq_threshold, MIN/MAX/BAD-DEBT bonuses,
  *      borrow_factor, borrow_rate_curve)            ← bonus fields here
@@ -42,7 +42,7 @@
  *   VITE_CSSOL_RESERVE=<…>
  *   VITE_WSOL_RESERVE=<…>
  *   VITE_CSSOL_WT_RESERVE=<…>
- *   (deUSX/sUSDC reserves are discovered automatically.)
+ *   (ceUSX/sUSDC reserves are discovered automatically.)
  */
 
 import {
@@ -93,6 +93,7 @@ const D = {
   initLendingMarket: disc("init_lending_market"),
   initReserve: disc("init_reserve"),
   updateReserveConfig: disc("update_reserve_config"),
+  seedDepositOnInitReserve: disc("seed_deposit_on_init_reserve"),
 };
 
 const CFG = {
@@ -112,6 +113,9 @@ const CFG = {
   UpdateElevationGroups: 34,
   UpdateDisableUsageAsCollateralOutsideEmode: 41,
   UpdateBorrowLimitOutsideElevationGroup: 44,
+  UpdateBorrowLimitsInElevationGroupAgainstThisReserve: 45,
+  UpdateFeesFlashLoanFee: 6,
+  UpdateFeesOriginationFee: 5,
 } as const;
 
 function loadKp(): Keypair {
@@ -249,6 +253,12 @@ interface ReserveSpec {
   borrowLimitOutsideEmode: bigint;
   depositLimit: bigint;
   borrowLimit: bigint;
+  /** Per-elevation-group borrow caps for when this reserve is used
+   *  as collateral. Indexed by `groupId - 1` (group ids are 1-based;
+   *  klend SDK reads `borrowLimitAgainstThisCollateralInElevationGroup[item - 1]`).
+   *  Leaving the slot at 0 produces `ElevationGroupBorrowLimitExceeded`
+   *  (6101) on every borrow. */
+  borrowLimitAgainstThisCollInEg: { groupId: number; limit: bigint }[];
 }
 
 function curveBuf(pts: { utilizationRateBps: number; borrowRateBps: number }[]): Buffer {
@@ -284,6 +294,15 @@ async function applyPhase1(conn: Connection, auth: Keypair, market: PublicKey, s
     { mode: CFG.UpdateLiquidationThresholdPct,   value: Buffer.from([s.liqThresholdPct]) },
     { mode: CFG.UpdateLoanToValuePct,            value: Buffer.from([s.ltvPct]) },
     { mode: CFG.UpdateBorrowRateCurve,           value: curveBuf(s.curvePts) },
+    // Flash-loan + origination fees zeroed for the credit-trade flow.
+    // The credit-trade open ix relies on a wSOL flash loan (borrow +
+    // wrap → csSOL → deposit → borrow → repay) — a non-zero flash
+    // fee would force us to either borrow `loan + fee` (slightly
+    // more leverage than the user requested) or deduct from
+    // collateral. Zeroing both keeps the math 1:1. We control the
+    // market so this is just protocol-level config.
+    { mode: CFG.UpdateFeesFlashLoanFee,          value: u64(0n) },
+    { mode: CFG.UpdateFeesOriginationFee,        value: u64(0n) },
   ];
   for (const { mode, value } of ixs) {
     await sendAndConfirmTransaction(conn, new Transaction()
@@ -294,13 +313,37 @@ async function applyPhase1(conn: Connection, auth: Keypair, market: PublicKey, s
   console.log(`  phase-1 ${s.name}: bonuses + ltv/liq + curve set`);
 }
 
+/** Pack the 32×u64 per-elevation-group borrow-limit array. The
+ *  array is indexed by `groupId - 1` (klend SDK uses `[item - 1]`,
+ *  see market.ts line 357). */
+function packBorrowLimitsAgainstColl(slots: { groupId: number; limit: bigint }[]): Buffer {
+  const buf = Buffer.alloc(32 * 8);
+  for (const { groupId, limit } of slots) {
+    if (groupId < 1 || groupId > 32) throw new Error(`group id must be 1..32, got ${groupId}`);
+    buf.writeBigUInt64LE(limit, (groupId - 1) * 8);
+  }
+  return buf;
+}
+
 async function applyPhase2(conn: Connection, auth: Keypair, market: PublicKey, s: ReserveSpec) {
   const ixs: { mode: number; value: Buffer; skip: boolean }[] = [
     { mode: CFG.UpdateElevationGroups, value: elevationGroupsBuf(s.elevationGroups), skip: true },
     { mode: CFG.UpdateDisableUsageAsCollateralOutsideEmode, value: Buffer.from([s.disableUsageOutsideEmode]), skip: true },
     { mode: CFG.UpdateBorrowLimitOutsideElevationGroup, value: u64(s.borrowLimitOutsideEmode), skip: true },
     { mode: CFG.UpdateDepositLimit, value: u64(s.depositLimit), skip: false },
+    // borrow_limit must be set BEFORE the per-EG slot — klend's
+    // reserve_config_check enforces `slot[i] ≤ borrow_limit`.
     { mode: CFG.UpdateBorrowLimit,  value: u64(s.borrowLimit),  skip: false },
+    // Per-collateral borrow caps in each elevation group. Empty
+    // array → all-zero blob is fine (this reserve isn't used as
+    // collateral in any group). When set, it caps how much debt can
+    // be secured by this reserve when borrowed against in group N.
+    // Run mode 45 with skip=false — mode 45's validator with skip=true
+    // appears to incorrectly fail (klend bug?). With skip=false the
+    // mode-specific check actually passes for valid `slot[i] ≤ borrow_limit`.
+    { mode: CFG.UpdateBorrowLimitsInElevationGroupAgainstThisReserve,
+      value: packBorrowLimitsAgainstColl(s.borrowLimitAgainstThisCollInEg),
+      skip: false },
   ];
   for (const { mode, value, skip } of ixs) {
     await sendAndConfirmTransaction(conn, new Transaction()
@@ -331,7 +374,10 @@ async function main() {
   console.log(`  Balance:    ${((await conn.getBalance(auth.publicKey)) / 1e9).toFixed(4)} SOL`);
 
   // Idempotency: resume from checkpoint if a run failed mid-way.
-  const checkpointPath = path.join(__dirname, "..", "configs/devnet/cssol-market-v2.checkpoint.json");
+  // Override `MARKET_VERSION` to bootstrap a fresh market (v3, v4, …)
+  // rather than reuse the v2 keypairs.
+  const version = process.env.MARKET_VERSION ?? "v2";
+  const checkpointPath = path.join(__dirname, "..", `configs/devnet/cssol-market-${version}.checkpoint.json`);
   let cp: Record<string, string> = {};
   if (fs.existsSync(checkpointPath)) {
     cp = JSON.parse(fs.readFileSync(checkpointPath, "utf8"));
@@ -345,6 +391,22 @@ async function main() {
     persist();
     return kp;
   };
+
+  // ── Loan-asset selector (v4+ uses the cSOL KYC wrapper instead of
+  //    raw wSOL — gates the borrow leg of the credit trade). ────────
+  const useCsol = parseInt(version.replace(/^v/, ""), 10) >= 4;
+  const csolPoolPath = path.join(__dirname, "..", "configs/devnet/csol-pool.json");
+  let CSOL_MINT: PublicKey | null = null;
+  if (useCsol) {
+    if (!fs.existsSync(csolPoolPath)) {
+      throw new Error(`csol-pool.json missing — run scripts/deploy-csol-pool-devnet.ts first`);
+    }
+    const csolPool = JSON.parse(fs.readFileSync(csolPoolPath, "utf8"));
+    CSOL_MINT = new PublicKey(csolPool.csolMint);
+    console.log(`  Loan asset: cSOL ${CSOL_MINT.toBase58()} (KYC-wrapped wSOL)`);
+  } else {
+    console.log(`  Loan asset: wSOL ${NATIVE_MINT.toBase58()} (un-gated)`);
+  }
 
   // --- Step 1: market ---
   const marketKp = stepKey("market", () => Keypair.generate());
@@ -368,7 +430,7 @@ async function main() {
   console.log("\nStep 2: oracles");
   const deusxOracle = cp.deusxOracle
     ? new PublicKey(cp.deusxOracle)
-    : await createMockOracle(conn, auth, 1.08, "deUSX");
+    : await createMockOracle(conn, auth, 1.08, "ceUSX");
   if (!cp.deusxOracle) { cp.deusxOracle = deusxOracle.toBase58(); persist(); }
   const susdcOracle = cp.susdcOracle
     ? new PublicKey(cp.susdcOracle)
@@ -379,41 +441,88 @@ async function main() {
   console.log("\nStep 3: seed ATAs");
   const cssolAta   = await ensureSeedAta(conn, auth, CSSOL_MINT, TOKEN_2022_PROGRAM_ID, "csSOL");
   const cssolWtAta = await ensureSeedAta(conn, auth, CSSOL_WT_MINT, TOKEN_2022_PROGRAM_ID, "csSOL-WT");
-  const deusxAta   = await ensureSeedAta(conn, auth, DEUSX_MINT, TOKEN_2022_PROGRAM_ID, "deUSX");
+  const deusxAta   = await ensureSeedAta(conn, auth, DEUSX_MINT, TOKEN_2022_PROGRAM_ID, "ceUSX");
   const susdcAta   = await ensureSeedAta(conn, auth, SUSDC_MINT, TOKEN_PROGRAM_ID, "sUSDC");
-  const wsolAta    = (await getOrCreateAssociatedTokenAccount(conn, auth, NATIVE_MINT, auth.publicKey, false, "confirmed")).address;
-  const wsolBalBig = BigInt((await conn.getTokenAccountBalance(wsolAta).catch(() => null))?.value.amount ?? "0");
-  if (wsolBalBig < 1_000_000n) {
-    await sendAndConfirmTransaction(conn, new Transaction()
-      .add(SystemProgram.transfer({ fromPubkey: auth.publicKey, toPubkey: wsolAta, lamports: 1_000_000 }))
-      .add(createSyncNativeInstruction(wsolAta)), [auth]);
+  // Loan-asset seed ATA: wSOL (v3) or cSOL (v4+).
+  let loanAssetMint: PublicKey;
+  let loanAssetTp: PublicKey;
+  let loanAssetAta: PublicKey;
+  let loanAssetSymbol: string;
+  if (useCsol && CSOL_MINT) {
+    loanAssetMint = CSOL_MINT;
+    loanAssetTp = TOKEN_2022_PROGRAM_ID;
+    loanAssetAta = await ensureSeedAta(conn, auth, CSOL_MINT, TOKEN_2022_PROGRAM_ID, "cSOL ");
+    loanAssetSymbol = "cSOL";
+  } else {
+    loanAssetMint = NATIVE_MINT;
+    loanAssetTp = TOKEN_PROGRAM_ID;
+    loanAssetAta = (await getOrCreateAssociatedTokenAccount(conn, auth, NATIVE_MINT, auth.publicKey, false, "confirmed")).address;
+    const wsolBalBig = BigInt((await conn.getTokenAccountBalance(loanAssetAta).catch(() => null))?.value.amount ?? "0");
+    if (wsolBalBig < 1_000_000n) {
+      await sendAndConfirmTransaction(conn, new Transaction()
+        .add(SystemProgram.transfer({ fromPubkey: auth.publicKey, toPubkey: loanAssetAta, lamports: 1_000_000 }))
+        .add(createSyncNativeInstruction(loanAssetAta)), [auth]);
+    }
+    loanAssetSymbol = "wSOL";
   }
-  console.log(`  wSOL ATA: ${wsolAta.toBase58()}`);
+  console.log(`  ${loanAssetSymbol} ATA: ${loanAssetAta.toBase58()}`);
 
   // --- Step 4: init 5 reserves ---
   console.log("\nStep 4: init reserves");
   const reserveRent = await conn.getMinimumBalanceForRentExemption(RESERVE_SIZE);
   async function initReserve(label: string, ckptKey: string, mint: PublicKey, seedAta: PublicKey, tp: PublicKey): Promise<Keypair> {
     const kp = stepKey(ckptKey, () => Keypair.generate());
-    if (!(await conn.getAccountInfo(kp.publicKey))) {
+    const liqSupply = rPda("reserve_liq_supply", kp.publicKey);
+    const seedDepositIx = new TransactionInstruction({
+      programId: KLEND,
+      data: D.seedDepositOnInitReserve,
+      keys: [
+        { pubkey: auth.publicKey, isSigner: true, isWritable: true },
+        { pubkey: marketKp.publicKey, isSigner: false, isWritable: false },
+        { pubkey: kp.publicKey, isSigner: false, isWritable: true },
+        { pubkey: mint, isSigner: false, isWritable: false },
+        { pubkey: liqSupply, isSigner: false, isWritable: true },
+        { pubkey: seedAta, isSigner: false, isWritable: true },
+        { pubkey: tp, isSigner: false, isWritable: false },
+      ],
+    });
+    const existed = await conn.getAccountInfo(kp.publicKey);
+    if (!existed) {
+      // init_reserve + seed_deposit_on_init_reserve in one tx so the
+      // reserve never spends a slot in `usage_blocked = true` state.
       await sendAndConfirmTransaction(conn, new Transaction()
         .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 }))
         .add(SystemProgram.createAccount({
           fromPubkey: auth.publicKey, newAccountPubkey: kp.publicKey,
           lamports: reserveRent, space: RESERVE_SIZE, programId: KLEND,
         }))
-        .add(buildInitReserveIx(auth.publicKey, marketKp.publicKey, kp.publicKey, mint, seedAta, tp)),
+        .add(buildInitReserveIx(auth.publicKey, marketKp.publicKey, kp.publicKey, mint, seedAta, tp))
+        .add(seedDepositIx),
         [auth, kp]);
-      console.log(`  ${label}: ${kp.publicKey.toBase58()}`);
+      console.log(`  ${label}: ${kp.publicKey.toBase58()}  (init + seed)`);
     } else {
-      console.log(`  ${label}: ${kp.publicKey.toBase58()} (existing)`);
+      // Existing reserve from a partial run — try seed_deposit alone
+      // (idempotent: returns 6130 if already done).
+      try {
+        await sendAndConfirmTransaction(conn, new Transaction()
+          .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }))
+          .add(seedDepositIx), [auth]);
+        console.log(`  ${label}: ${kp.publicKey.toBase58()}  (resumed, seed ✓)`);
+      } catch (e: any) {
+        const logs = JSON.stringify(e?.transactionLogs ?? "");
+        if (logs.includes("InitialAdminDepositExecuted") || logs.includes("6130")) {
+          console.log(`  ${label}: ${kp.publicKey.toBase58()}  (resumed, seed already done)`);
+        } else {
+          throw e;
+        }
+      }
     }
     return kp;
   }
   const csSolKp    = await initReserve("csSOL   ", "csSolReserve", CSSOL_MINT, cssolAta, TOKEN_2022_PROGRAM_ID);
-  const wSolKp     = await initReserve("wSOL    ", "wSolReserve", NATIVE_MINT, wsolAta, TOKEN_PROGRAM_ID);
+  const loanKp     = await initReserve(`${loanAssetSymbol.padEnd(7)}`, "loanReserve", loanAssetMint, loanAssetAta, loanAssetTp);
   const csSolWtKp  = await initReserve("csSOL-WT", "csSolWtReserve", CSSOL_WT_MINT, cssolWtAta, TOKEN_2022_PROGRAM_ID);
-  const deusxKp    = await initReserve("deUSX   ", "deusxReserve", DEUSX_MINT, deusxAta, TOKEN_2022_PROGRAM_ID);
+  const deusxKp    = await initReserve("ceUSX   ", "deusxReserve", DEUSX_MINT, deusxAta, TOKEN_2022_PROGRAM_ID);
   const susdcKp    = await initReserve("sUSDC   ", "susdcReserve", SUSDC_MINT, susdcAta, TOKEN_PROGRAM_ID);
 
   // --- Step 5: phase-1 reserve config (everything except elevation groups
@@ -433,34 +542,48 @@ async function main() {
     { utilizationRateBps: 10000, borrowRateBps: 5000 },
   ];
 
+  // Per-collateral elevation-group borrow caps. csSOL & csSOL-WT
+  // secure wSOL debt under group 2; ceUSX secures sUSDC debt under
+  // group 1. wSOL/sUSDC are the debt sides — they don't appear here.
+  const COLL_EG_LIMIT = BigInt("100000000000000"); // 100T base units
   const specs: ReserveSpec[] = [
     {
       name: "csSOL", reserveKp: csSolKp, mint: CSSOL_MINT, oracle: CSSOL_ORACLE, tokenProgram: TOKEN_2022_PROGRAM_ID, seedAta: cssolAta,
       ltvPct: 55, liqThresholdPct: 65, minLiqBonusBps: SOL_BONUSES.min, maxLiqBonusBps: SOL_BONUSES.max, badDebtLiqBonusBps: SOL_BONUSES.bad,
       borrowFactorPct: 100n, curvePts: FLAT_CURVE,
       elevationGroups: [2, ...Array(19).fill(0)], disableUsageOutsideEmode: 1,
-      borrowLimitOutsideEmode: 0n, depositLimit: 100_000_000_000_000n, borrowLimit: 0n,
+      borrowLimitOutsideEmode: 0n, depositLimit: 100_000_000_000_000n,
+      // borrow_limit must be ≥ borrowLimitAgainstThisCollInEg[i] —
+      // klend's reserve_config_check rejects the per-EG slot
+      // otherwise. `disable_usage_outside_emode = 1` still keeps
+      // direct borrows blocked; this cap is purely the in-eMode
+      // collateral-secured-debt ceiling.
+      borrowLimit: COLL_EG_LIMIT,
+      borrowLimitAgainstThisCollInEg: [{ groupId: 2, limit: COLL_EG_LIMIT }],
     },
     {
-      name: "wSOL", reserveKp: wSolKp, mint: NATIVE_MINT, oracle: WSOL_ORACLE, tokenProgram: TOKEN_PROGRAM_ID, seedAta: wsolAta,
+      name: loanAssetSymbol, reserveKp: loanKp, mint: loanAssetMint, oracle: WSOL_ORACLE, tokenProgram: loanAssetTp, seedAta: loanAssetAta,
       ltvPct: 0, liqThresholdPct: 0, minLiqBonusBps: SOL_BONUSES.min, maxLiqBonusBps: SOL_BONUSES.max, badDebtLiqBonusBps: SOL_BONUSES.bad,
       borrowFactorPct: 100n, curvePts: NORMAL_CURVE,
       elevationGroups: [2, ...Array(19).fill(0)], disableUsageOutsideEmode: 0,
       borrowLimitOutsideEmode: BigInt("18446744073709551615"), depositLimit: 100_000_000_000_000n, borrowLimit: 100_000_000_000_000n,
+      borrowLimitAgainstThisCollInEg: [], // loan asset is the debt reserve, never the collateral
     },
     {
       name: "csSOL-WT", reserveKp: csSolWtKp, mint: CSSOL_WT_MINT, oracle: CSSOL_WT_ORACLE, tokenProgram: TOKEN_2022_PROGRAM_ID, seedAta: cssolWtAta,
       ltvPct: 55, liqThresholdPct: 65, minLiqBonusBps: SOL_BONUSES.min, maxLiqBonusBps: SOL_BONUSES.max, badDebtLiqBonusBps: SOL_BONUSES.bad,
       borrowFactorPct: 100n, curvePts: FLAT_CURVE,
       elevationGroups: [2, ...Array(19).fill(0)], disableUsageOutsideEmode: 1,
-      borrowLimitOutsideEmode: 0n, depositLimit: 100_000_000_000_000n, borrowLimit: 0n,
+      borrowLimitOutsideEmode: 0n, depositLimit: 100_000_000_000_000n, borrowLimit: COLL_EG_LIMIT,
+      borrowLimitAgainstThisCollInEg: [{ groupId: 2, limit: COLL_EG_LIMIT }],
     },
     {
-      name: "deUSX", reserveKp: deusxKp, mint: DEUSX_MINT, oracle: deusxOracle, tokenProgram: TOKEN_2022_PROGRAM_ID, seedAta: deusxAta,
+      name: "ceUSX", reserveKp: deusxKp, mint: DEUSX_MINT, oracle: deusxOracle, tokenProgram: TOKEN_2022_PROGRAM_ID, seedAta: deusxAta,
       ltvPct: 75, liqThresholdPct: 85, minLiqBonusBps: STABLE_BONUSES.min, maxLiqBonusBps: STABLE_BONUSES.max, badDebtLiqBonusBps: STABLE_BONUSES.bad,
       borrowFactorPct: 100n, curvePts: FLAT_CURVE,
       elevationGroups: [1, ...Array(19).fill(0)], disableUsageOutsideEmode: 1,
-      borrowLimitOutsideEmode: 0n, depositLimit: 100_000_000_000_000n, borrowLimit: 0n,
+      borrowLimitOutsideEmode: 0n, depositLimit: 100_000_000_000_000n, borrowLimit: COLL_EG_LIMIT,
+      borrowLimitAgainstThisCollInEg: [{ groupId: 1, limit: COLL_EG_LIMIT }],
     },
     {
       name: "sUSDC", reserveKp: susdcKp, mint: SUSDC_MINT, oracle: susdcOracle, tokenProgram: TOKEN_PROGRAM_ID, seedAta: susdcAta,
@@ -468,19 +591,22 @@ async function main() {
       borrowFactorPct: 100n, curvePts: NORMAL_CURVE,
       elevationGroups: [1, ...Array(19).fill(0)], disableUsageOutsideEmode: 0,
       borrowLimitOutsideEmode: BigInt("18446744073709551615"), depositLimit: 100_000_000_000_000n, borrowLimit: 100_000_000_000_000n,
+      borrowLimitAgainstThisCollInEg: [], // sUSDC is the debt reserve, never the collateral
     },
   ];
 
   for (const s of specs) await applyPhase1(conn, auth, marketKp.publicKey, s);
 
-  // --- Step 6: register elevation groups (BOTH, before phase-2 enrolls) ---
+  // --- Step 6: register elevation groups BEFORE phase-2 — phase-2
+  // sets `elevation_groups[i] = group_id` on each reserve, and klend's
+  // mode-34 validator rejects unregistered group ids (6069). ---
   console.log("\nStep 6: register elevation groups");
   await sendAndConfirmTransaction(conn, new Transaction()
     .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }))
     .add(buildUpdateElevationGroupIx(auth.publicKey, marketKp.publicKey, {
       id: 2, ltvPct: 90, liquidationThresholdPct: 92,
       maxLiquidationBonusBps: 200, allowNewLoans: 1,
-      maxReservesAsCollateral: 2, debtReserve: wSolKp.publicKey,
+      maxReservesAsCollateral: 2, debtReserve: loanKp.publicKey,
     })), [auth]);
   console.log("  group 2 (LST/SOL): registered");
 
@@ -493,7 +619,8 @@ async function main() {
     })), [auth]);
   console.log("  group 1 (Stables): registered");
 
-  // --- Step 7: phase-2 (groups, disable_outside, limits) ---
+  // --- Step 7: phase-2 reserve config (groups must already be
+  // registered for `UpdateElevationGroups` (mode 34) to pass). ---
   console.log("\nStep 7: phase-2 reserve config");
   for (const s of specs) await applyPhase2(conn, auth, marketKp.publicKey, s);
 
@@ -503,41 +630,42 @@ async function main() {
     market: marketKp.publicKey.toBase58(),
     reserves: {
       csSOL:    csSolKp.publicKey.toBase58(),
-      wSOL:     wSolKp.publicKey.toBase58(),
+      [loanAssetSymbol]: loanKp.publicKey.toBase58(),
       csSOL_WT: csSolWtKp.publicKey.toBase58(),
-      deUSX:    deusxKp.publicKey.toBase58(),
+      ceUSX:    deusxKp.publicKey.toBase58(),
       sUSDC:    susdcKp.publicKey.toBase58(),
     },
     oracles: {
       csSOL: CSSOL_ORACLE.toBase58(),
-      wSOL:  WSOL_ORACLE.toBase58(),
+      [loanAssetSymbol]: WSOL_ORACLE.toBase58(),
       csSOL_WT: CSSOL_WT_ORACLE.toBase58(),
-      deUSX: deusxOracle.toBase58(),
+      ceUSX: deusxOracle.toBase58(),
       sUSDC: susdcOracle.toBase58(),
     },
+    loanAsset: { symbol: loanAssetSymbol, mint: loanAssetMint.toBase58() },
     elevationGroups: {
-      "1": { name: "Stables", ltv: 90, liqThreshold: 92, debtReserve: susdcKp.publicKey.toBase58(), collateral: ["deUSX"] },
-      "2": { name: "LST/SOL", ltv: 90, liqThreshold: 92, debtReserve: wSolKp.publicKey.toBase58(), collateral: ["csSOL", "csSOL-WT"] },
+      "1": { name: "Stables", ltv: 90, liqThreshold: 92, debtReserve: susdcKp.publicKey.toBase58(), collateral: ["ceUSX"] },
+      "2": { name: "LST/SOL", ltv: 90, liqThreshold: 92, debtReserve: loanKp.publicKey.toBase58(), collateral: ["csSOL", "csSOL-WT"] },
     },
     createdAt: new Date().toISOString(),
   };
-  const outPath = path.join(__dirname, "..", "configs/devnet/cssol-market-v2.json");
+  const outPath = path.join(__dirname, "..", `configs/devnet/cssol-market-${version}.json`);
   fs.writeFileSync(outPath, JSON.stringify(out, null, 2));
 
   console.log("\n╔══════════════════════════════════════════════╗");
   console.log("║  Bootstrap complete                          ║");
   console.log("╚══════════════════════════════════════════════╝");
   console.log(`  market:        ${marketKp.publicKey.toBase58()}`);
-  console.log(`  reserves:      csSOL/${csSolKp.publicKey.toBase58().slice(0,8)} wSOL/${wSolKp.publicKey.toBase58().slice(0,8)} csSOL-WT/${csSolWtKp.publicKey.toBase58().slice(0,8)} deUSX/${deusxKp.publicKey.toBase58().slice(0,8)} sUSDC/${susdcKp.publicKey.toBase58().slice(0,8)}`);
+  console.log(`  reserves:      csSOL/${csSolKp.publicKey.toBase58().slice(0,8)} wSOL/${loanKp.publicKey.toBase58().slice(0,8)} csSOL-WT/${csSolWtKp.publicKey.toBase58().slice(0,8)} ceUSX/${deusxKp.publicKey.toBase58().slice(0,8)} sUSDC/${susdcKp.publicKey.toBase58().slice(0,8)}`);
   console.log(`  config:        ${outPath}`);
   console.log("\n  Next: update packages/frontend-playground/.env (or addresses.ts):");
   console.log(`    VITE_KLEND_MARKET=${marketKp.publicKey.toBase58()}`);
   console.log(`    VITE_CSSOL_RESERVE=${csSolKp.publicKey.toBase58()}`);
-  console.log(`    VITE_WSOL_RESERVE=${wSolKp.publicKey.toBase58()}`);
+  console.log(`    VITE_WSOL_RESERVE=${loanKp.publicKey.toBase58()}`);
   console.log(`    VITE_CSSOL_WT_RESERVE=${csSolWtKp.publicKey.toBase58()}`);
   console.log(`    VITE_WSOL_RESERVE_ORACLE=${WSOL_ORACLE.toBase58()}`);
   console.log(`    VITE_CSSOL_RESERVE_ORACLE=${CSSOL_ORACLE.toBase58()}`);
-  console.log(`  Then update LendingPositionTab.tsx KNOWN_MINTS oracle for deUSX → ${deusxOracle.toBase58()}, sUSDC → ${susdcOracle.toBase58()}`);
+  console.log(`  Then update LendingPositionTab.tsx KNOWN_MINTS oracle for ceUSX → ${deusxOracle.toBase58()}, sUSDC → ${susdcOracle.toBase58()}`);
   console.log(`  And register the new market with the governor: scripts/register-cssol-market.ts (re-run with new VITE addresses)`);
 }
 

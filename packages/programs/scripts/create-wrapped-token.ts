@@ -14,7 +14,7 @@
  *
  * Examples:
  *   npx tsx scripts/create-wrapped-token.ts --name "Test USDY" --symbol tUSDY --price 1.08
- *   npx tsx scripts/create-wrapped-token.ts --mint So11111111111111111111111111111111111111112 --name "Wrapped SOL" --symbol dSOL --price 150
+ *   npx tsx scripts/create-wrapped-token.ts --mint So11111111111111111111111111111111111111112 --name "Wrapped SOL" --symbol cSOL --price 150
  */
 
 import {

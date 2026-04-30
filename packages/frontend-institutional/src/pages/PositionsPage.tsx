@@ -29,7 +29,7 @@ interface CollateralAsset {
 
 const COLLATERAL_ASSETS: CollateralAsset[] = [
   {
-    symbol: "deUSX", mint: new PublicKey("8Uy7rmtAZvnQA1SuYZJKKBXFovHDPEYXiYH3H6iQMRwT"),
+    symbol: "ceUSX", mint: new PublicKey("8Uy7rmtAZvnQA1SuYZJKKBXFovHDPEYXiYH3H6iQMRwT"),
     reserve: new PublicKey("3FkBgVfnYBnUre6GMQZv8w4dDM1x7Fp5RiGk96kZ5mVs"),
     oracle: new PublicKey("6dbNQrjLVQxk1bJhbB6AiMFWzaf8G2d3LPjH69Je498A"),
     tokenProgram: TOKEN_2022_PROGRAM_ID, price: 1.08, yieldApy: "~10%",
@@ -415,7 +415,7 @@ export default function PositionsPage() {
 
       // Refresh: borrow reserve LAST
       const reserves = findObligationReserves(Buffer.from(obInfo.data));
-      // Ensure both deUSX and USDC reserves are refreshed
+      // Ensure both ceUSX and USDC reserves are refreshed
       const allReserves = new Set([...reserves.map(r => r.toBase58()), USDC_RESERVE.toBase58()]);
       const refreshOrder = [...[...allReserves].filter(r => r !== USDC_RESERVE.toBase58()), USDC_RESERVE.toBase58()];
       for (const rAddr of refreshOrder) {
@@ -499,7 +499,11 @@ export default function PositionsPage() {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold">Positions</h2>
+      <div>
+        <span className="eyebrow">Lending</span>
+        <h2 className="text-2xl mt-1">Positions</h2>
+        <p className="text-sm text-base-content/55 mt-1">Live view of your collateral, borrows, and obligation health.</p>
+      </div>
 
       {status && (
         <div className={`alert ${status.type === "success" ? "alert-success" : status.type === "error" ? "alert-error" : "alert-info"} text-sm`}>
@@ -510,25 +514,25 @@ export default function PositionsPage() {
       {/* Summary */}
       {p && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <div className="card bg-base-200 border border-base-300"><div className="card-body p-4 gap-1">
+          <div className="panel"><div className="card-body p-4 gap-1">
             <div className="text-xs opacity-50">Collateral</div>
             <div className="font-mono font-bold text-success">${p.totalCollateralUsd.toFixed(2)}</div>
           </div></div>
-          <div className="card bg-base-200 border border-base-300"><div className="card-body p-4 gap-1">
+          <div className="panel"><div className="card-body p-4 gap-1">
             <div className="text-xs opacity-50">Borrows</div>
             <div className="font-mono font-bold text-warning">${p.totalBorrowUsd.toFixed(2)}</div>
           </div></div>
-          <div className="card bg-base-200 border border-base-300"><div className="card-body p-4 gap-1">
+          <div className="panel"><div className="card-body p-4 gap-1">
             <div className="text-xs opacity-50">Available to Borrow</div>
             <div className="font-mono font-bold text-primary">${Math.min(p.maxBorrow, p.availableLiquidity).toFixed(2)}</div>
           </div></div>
-          <div className="card bg-base-200 border border-base-300"><div className="card-body p-4 gap-1">
+          <div className="panel"><div className="card-body p-4 gap-1">
             <div className="text-xs opacity-50">Health Factor</div>
             <div className={`font-mono font-bold ${!p.healthFactor ? "opacity-40" : p.healthFactor > 1.5 ? "text-success" : p.healthFactor > 1.1 ? "text-warning" : "text-error"}`}>
               {p.healthFactor ? p.healthFactor.toFixed(2) : "—"}
             </div>
           </div></div>
-          <div className="card bg-base-200 border border-base-300"><div className="card-body p-4 gap-1">
+          <div className="panel"><div className="card-body p-4 gap-1">
             <div className="text-xs opacity-50">Liq. Price</div>
             <div className="font-mono font-bold text-error">
               {p.liquidationPrice ? `$${p.liquidationPrice.toFixed(4)}` : "—"}
@@ -540,7 +544,7 @@ export default function PositionsPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Collateral */}
-        <div className="card bg-base-200 border border-base-300">
+        <div className="panel">
           <div className="card-body p-6 gap-3">
             <h3 className="card-title text-lg">Collateral</h3>
             <table className="table table-sm">
@@ -672,7 +676,7 @@ export default function PositionsPage() {
         </div>
 
         {/* Borrows */}
-        <div className="card bg-base-200 border border-base-300">
+        <div className="panel">
           <div className="card-body p-6 gap-3">
             <div className="flex items-center justify-between">
               <h3 className="card-title text-lg">Borrows</h3>
@@ -775,7 +779,7 @@ export default function PositionsPage() {
 
       {/* Market Parameters (collapsible) */}
       {p && (
-        <div className="card bg-base-200 border border-base-300">
+        <div className="panel">
           <div className="card-body p-4 gap-2">
             <button className="flex items-center justify-between w-full text-sm" onClick={() => setShowMarketParams(!showMarketParams)}>
               <span className="font-semibold opacity-70">Market Parameters</span>

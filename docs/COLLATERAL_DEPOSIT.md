@@ -2,12 +2,12 @@
 
 ## Overview
 
-Institutions deposit yield-bearing collateral (deUSX) into a klend lending market and borrow stablecoins (USDC) against it. The collateral goes through a KYC-wrapping pipeline before it can be deposited.
+Institutions deposit yield-bearing collateral (ceUSX) into a klend lending market and borrow stablecoins (USDC) against it. The collateral goes through a KYC-wrapping pipeline before it can be deposited.
 
 ## Token Pipeline
 
 ```
-USDC/USDT → Mint USX → Lock in YieldVault → eUSX → KYC Wrap → deUSX → Deposit as Collateral
+USDC/USDT → Mint USX → Lock in YieldVault → eUSX → KYC Wrap → ceUSX → Deposit as Collateral
                 (Solstice API)   (Solstice API)        (Governor)       (klend)
 ```
 
@@ -15,8 +15,8 @@ USDC/USDT → Mint USX → Lock in YieldVault → eUSX → KYC Wrap → deUSX �
 |------|-------|--------|---------|-------|
 | 1. Mint USX | USDC or USDT | USX | Solstice API | Amount in **lamports** (1 USDC = 1,000,000) |
 | 2. Lock USX | USX | eUSX | Solstice API | Yield-bearing (~8-12% APY) |
-| 3. KYC Wrap | eUSX | deUSX | Governor (`wrap`) | Requires whitelist entry |
-| 4. Deposit | deUSX | Collateral position | klend | Creates/uses obligation |
+| 3. KYC Wrap | eUSX | ceUSX | Governor (`wrap`) | Requires whitelist entry |
+| 4. Deposit | ceUSX | Collateral position | klend | Creates/uses obligation |
 
 ## Solstice API Integration
 
@@ -50,7 +50,7 @@ server: {
 
 The `wrap` instruction on the Governor program:
 1. Transfers eUSX from user → pool vault (1:1)
-2. Mints deUSX to user (Token-2022)
+2. Mints ceUSX to user (Token-2022)
 3. Requires the user to be **whitelisted** on the pool's MintConfig
 
 ### Whitelisting for Activated Pools
@@ -121,10 +121,10 @@ const [obPda] = PublicKey.findProgramAddressSync(
 **Currently used obligation IDs**:
 | ID | Status | Contents |
 |----|--------|----------|
-| 0 | Stranded | Old dUSDY + old USDC deposits |
+| 0 | Stranded | Old cUSDY + old USDC deposits |
 | 1 | Stranded | Old USDC deposit |
 | 2 | Used by authority USDC liquidity deposit | sUSDC collateral |
-| **3** | **Active** | deUSX deposits (institutional frontend) |
+| **3** | **Active** | ceUSX deposits (institutional frontend) |
 
 ### RefreshObligation Remaining Accounts
 
@@ -173,7 +173,7 @@ async function signAndSend(tx: Transaction): Promise<string> {
 
 | Reserve | Address | Mint | Oracle | LTV | Price |
 |---------|---------|------|--------|-----|-------|
-| deUSX | `3FkBgVfn...` | `8Uy7rmtA...` (Token-2022) | `6dbNQrjL...` | 95% | $1.08 |
+| ceUSX | `3FkBgVfn...` | `8Uy7rmtA...` (Token-2022) | `6dbNQrjL...` | 95% | $1.08 |
 | dtUSDY | `HhTUuM5X...` | `6SV8ecHh...` (Token-2022) | `4Xv1RpZQ...` | 95% | $1.08 |
 | sUSDC | `AYhwFLgz...` | `8iBux2LR...` (Token) | `EN2FsFZF...` | 0% | $1.00 |
 
@@ -183,7 +183,7 @@ Market: `45FNL648aXgbMoMzLfYE2vCZAtWWDCky2tYLCEUztc98`
 
 These were created during earlier setup and have locked configs:
 
-- `HoEa26bH...` — old dUSDY
+- `HoEa26bH...` — old cUSDY
 - `7fYbqqcW...` — old test USDC
 - `GwcTF1ux...` — old Solstice USDC
 - `D4qXufDq...` — old USDC (first attempt)

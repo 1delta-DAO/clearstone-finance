@@ -337,9 +337,10 @@ export default function BorrowPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold">Borrow USDC</h2>
-        <p className="text-base-content/50 text-sm mt-1">
-          Borrow Solstice USDC against your deposited deUSX collateral.
+        <span className="eyebrow">Lending</span>
+        <h2 className="text-2xl mt-1">Borrow USDC</h2>
+        <p className="text-base-content/55 text-sm mt-1">
+          Borrow Solstice USDC against your deposited ceUSX collateral.
         </p>
       </div>
 
@@ -348,35 +349,35 @@ export default function BorrowPage() {
         <div className="flex justify-center py-4"><span className="loading loading-spinner" /></div>
       ) : p ? (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <div className="card bg-base-200 border border-base-300">
+          <div className="panel">
             <div className="card-body p-4 gap-1">
               <div className="text-xs opacity-50">Collateral</div>
-              <div className="font-mono font-bold">{p.collateralDeposited.toFixed(2)} deUSX</div>
+              <div className="font-mono font-bold">{p.collateralDeposited.toFixed(2)} ceUSX</div>
               <div className="text-xs opacity-40">${p.collateralValueUsd.toFixed(2)}</div>
             </div>
           </div>
-          <div className="card bg-base-200 border border-base-300">
+          <div className="panel">
             <div className="card-body p-4 gap-1">
               <div className="text-xs opacity-50">Max Borrow</div>
               <div className="font-mono font-bold text-primary">${p.maxBorrowUsd.toFixed(2)}</div>
               <div className="text-xs opacity-40">LTV {p.ltvPct}%</div>
             </div>
           </div>
-          <div className="card bg-base-200 border border-base-300">
+          <div className="panel">
             <div className="card-body p-4 gap-1">
               <div className="text-xs opacity-50">Current Borrows</div>
               <div className="font-mono font-bold text-warning">${p.borrowedUsdc.toFixed(2)}</div>
               <div className="text-xs opacity-40">USDC</div>
             </div>
           </div>
-          <div className="card bg-base-200 border border-base-300">
+          <div className="panel">
             <div className="card-body p-4 gap-1">
               <div className="text-xs opacity-50">Available</div>
               <div className="font-mono font-bold text-success">${p.availableToBorrow.toFixed(2)}</div>
               <div className="text-xs opacity-40">can borrow</div>
             </div>
           </div>
-          <div className="card bg-base-200 border border-base-300">
+          <div className="panel">
             <div className="card-body p-4 gap-1">
               <div className="text-xs opacity-50">Health Factor</div>
               <div className={`font-mono font-bold ${p.healthFactor === null ? "opacity-40" : p.healthFactor > 1.5 ? "text-success" : p.healthFactor > 1.1 ? "text-warning" : "text-error"}`}>
@@ -399,7 +400,7 @@ export default function BorrowPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* Borrow Card */}
-        <div className="card bg-base-200 border border-base-300">
+        <div className="panel">
           <div className="card-body p-6 gap-4">
             <h3 className="card-title">Borrow USDC</h3>
 
@@ -451,7 +452,7 @@ export default function BorrowPage() {
         </div>
 
         {/* Repay Card */}
-        <div className="card bg-base-200 border border-base-300">
+        <div className="panel">
           <div className="card-body p-6 gap-4">
             <h3 className="card-title">Repay USDC</h3>
 
@@ -506,7 +507,7 @@ export default function BorrowPage() {
         </div>
 
         {/* Details Card */}
-        <div className="card bg-base-200 border border-base-300">
+        <div className="panel">
           <div className="card-body p-6 gap-3">
             <h3 className="card-title">Market Parameters</h3>
             <div className="space-y-2 text-sm">

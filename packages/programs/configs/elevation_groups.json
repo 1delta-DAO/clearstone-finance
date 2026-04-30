@@ -6,7 +6,7 @@
       "id": 1,
       "name": "stables",
       "debtReserveSymbol": "USDC",
-      "collateralReserveSymbols": ["dUSDY"],
+      "collateralReserveSymbols": ["cUSDY"],
       "ltvPct": 75,
       "liquidationThresholdPct": 82,
       "maxLiquidationBonusBps": 500,

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Delta Mint creates **KYC-gated wrapped tokens** (starting with dUSDY, a 1:1 wrapped USDY) that can be used as collateral in **permissionless Kamino Lend V2 markets**. This combines institutional-grade compliance (KYC at the token issuance layer) with DeFi-native lending infrastructure (audited, battle-tested Kamino protocol).
+Delta Mint creates **KYC-gated wrapped tokens** (starting with cUSDY, a 1:1 wrapped USDY) that can be used as collateral in **permissionless Kamino Lend V2 markets**. This combines institutional-grade compliance (KYC at the token issuance layer) with DeFi-native lending infrastructure (audited, battle-tested Kamino protocol).
 
 ```
 ┌──────────────────────────────────────────────────────┐
@@ -54,7 +54,7 @@ A permissionless lending market created via the `klend` program with two reserve
 
 | Reserve | Asset | Role | Oracle |
 |---|---|---|---|
-| dUSDY | KYC-wrapped USDY | **Collateral** (LTV 75%) | Pyth USDY feed (`BkN8...`) |
+| cUSDY | KYC-wrapped USDY | **Collateral** (LTV 75%) | Pyth USDY feed (`BkN8...`) |
 | USDC | Circle USDC | **Borrow** | Pyth USDC feed (`Gnt27...`) |
 
 **Program:** `KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD`
@@ -80,7 +80,7 @@ Only whitelisted users can hold the collateral token.
 
 ---
 
-## Token Design: dUSDY
+## Token Design: cUSDY
 
 | Property | Value |
 |---|---|
@@ -93,7 +93,7 @@ Only whitelisted users can hold the collateral token.
 
 ### Confidential Transfers
 
-The dUSDY mint is initialized with the **ConfidentialTransferMint** extension:
+The cUSDY mint is initialized with the **ConfidentialTransferMint** extension:
 - Users can opt-in to confidential transfers on their token accounts
 - Standard (non-encrypted) balances remain readable by the lending protocol
 - The lending protocol interacts with standard balances normally
@@ -104,14 +104,14 @@ The dUSDY mint is initialized with the **ConfidentialTransferMint** extension:
 
 ## Reserve Configurations
 
-### dUSDY Collateral Reserve (`configs/delta_usdy_reserve.json`)
+### cUSDY Collateral Reserve (`configs/delta_usdy_reserve.json`)
 
 ```
 LTV:                     75%
 Liquidation threshold:   82%
 Min liquidation bonus:   200 bps (2%)
 Max liquidation bonus:   500 bps (5%)
-Deposit limit:           100,000 dUSDY
+Deposit limit:           100,000 cUSDY
 Borrow limit:            0 (collateral-only)
 Oracle:                  Pyth USDY (BkN8hYgRjhyH18aBsuzvMSyMTBRkDrGs1PTgMbBFpnLb)
 Auto-deleverage:         Enabled
@@ -167,7 +167,7 @@ Interest Rate Curve:
 
 ## Liquidations — Whitelisted Approach
 
-Kamino V2 liquidations are **permissionless by default** — any wallet can call `liquidateObligationAndRedeemReserveCollateral`. But since dUSDY is KYC-gated, an un-whitelisted liquidator **cannot receive the collateral**. We solve this with a hybrid approach.
+Kamino V2 liquidations are **permissionless by default** — any wallet can call `liquidateObligationAndRedeemReserveCollateral`. But since cUSDY is KYC-gated, an un-whitelisted liquidator **cannot receive the collateral**. We solve this with a hybrid approach.
 
 ### The Problem
 
@@ -175,10 +175,10 @@ Kamino V2 liquidations are **permissionless by default** — any wallet can call
 Liquidator repays borrower's USDC debt
          │
          ▼
-Liquidator receives dUSDY collateral (+ bonus)
+Liquidator receives cUSDY collateral (+ bonus)
          │
          ▼
-❌ Liquidator is not KYC'd → cannot hold dUSDY
+❌ Liquidator is not KYC'd → cannot hold cUSDY
 ```
 
 ### Solution: Hybrid Whitelisted Liquidators + Auto-Deleverage
@@ -200,7 +200,7 @@ Liquidator receives dUSDY collateral (+ bonus)
 │  │ Kamino Auto-Deleverage                       │       │
 │  │ • Triggered by Risk Council via multisig     │       │
 │  │ • Sells collateral on open market            │       │
-│  │ • No third party receives dUSDY directly     │       │
+│  │ • No third party receives cUSDY directly     │       │
 │  │ • autodeleverageEnabled = 1 in market config │       │
 │  └──────────────────────────────────────────────┘       │
 └─────────────────────────────────────────────────────────┘
@@ -213,7 +213,7 @@ Liquidator receives dUSDY collateral (+ bonus)
 | `Holder` | Yes | Yes | Yes | KYC'd end users |
 | `Liquidator` | No | Yes | Yes | Pre-vetted bot operators |
 
-The `add_liquidator` instruction creates a whitelist entry with `role = Liquidator`. These wallets can receive dUSDY collateral during Kamino liquidations but **cannot mint new tokens** — they only participate in the secondary market.
+The `add_liquidator` instruction creates a whitelist entry with `role = Liquidator`. These wallets can receive cUSDY collateral during Kamino liquidations but **cannot mint new tokens** — they only participate in the secondary market.
 
 ### Liquidation Parameters
 
@@ -256,7 +256,7 @@ This is tracked as a future enhancement — the whitelisted bot approach works f
 |---|---|
 | Create Token-2022 mint with CT extension | ✅ |
 | Whitelist a user (KYC approval) | ✅ |
-| Mint 10,000 dUSDY to whitelisted user | ✅ |
+| Mint 10,000 cUSDY to whitelisted user | ✅ |
 | Confirm klend program loaded on fork | ✅ |
 | Read Kamino main market from fork | ✅ |
 | Verify USDY and USDC mints on fork | ✅ |
@@ -267,14 +267,14 @@ This is tracked as a future enhancement — the whitelisted bot approach works f
 
 | Test | Status |
 |---|---|
-| Create dUSDY Token-2022 mint with CT extension | ✅ |
+| Create cUSDY Token-2022 mint with CT extension | ✅ |
 | Whitelist market operator (self-KYC) | ✅ |
-| Mint 100 dUSDY for reserve seeding | ✅ |
+| Mint 100 cUSDY for reserve seeding | ✅ |
 | Create Kamino Lend V2 lending market | ✅ (timeout-tolerant) |
-| Initialize dUSDY collateral reserve | ✅ (timeout-tolerant) |
+| Initialize cUSDY collateral reserve | ✅ (timeout-tolerant) |
 | Initialize USDC borrow reserve | ✅ (timeout-tolerant) |
 | Verify klend PDAs and instruction layout | ✅ |
-| Validate dUSDY reserve config from JSON | ✅ |
+| Validate cUSDY reserve config from JSON | ✅ |
 | Validate USDC reserve config from JSON | ✅ |
 | Print remaining steps to production | ✅ |
 
@@ -290,7 +290,7 @@ This is tracked as a future enhancement — the whitelisted bot approach works f
 - **Compatibility:** Standard balances used by klend — CT is transparent to the lending protocol
 
 ### 2. Oracle Configuration
-- **Strategy:** Use existing Pyth USDY price feed for dUSDY (1:1 peg)
+- **Strategy:** Use existing Pyth USDY price feed for cUSDY (1:1 peg)
 - **Feed:** `BkN8hYgRjhyH18aBsuzvMSyMTBRkDrGs1PTgMbBFpnLb`
 - **Next:** Apply via `updateReserveConfig` with `UpdatePythPrice` mode
 
@@ -307,14 +307,14 @@ This is tracked as a future enhancement — the whitelisted bot approach works f
 ### 5. Production Deployment
 - [x] Deploy delta-mint program to devnet
 - [x] Deploy governor program to devnet
-- [x] Create dUSDY mint on devnet (Token-2022 w/ confidential transfer)
+- [x] Create cUSDY mint on devnet (Token-2022 w/ confidential transfer)
 - [x] Create Kamino lending market on devnet
 - [x] Initialize USDC borrow reserve
-- [x] Initialize dUSDY collateral reserve
+- [x] Initialize cUSDY collateral reserve
 - [x] Configure reserve oracles (Pyth USDY + mock USDC)
 - [x] Configure reserve parameters (LTV, liquidation threshold, borrow rate curve)
 - [x] Whitelist authority wallet as Holder
-- [x] Mint dUSDY tokens via governor
+- [x] Mint cUSDY tokens via governor
 - [ ] Set up KYC whitelist management (API/dashboard)
 - [ ] End-to-end deposit/borrow testing on devnet
 - [ ] Security audit
@@ -337,16 +337,16 @@ pnpm deploy:all:devnet
 pnpm build                  # Build Anchor programs
 pnpm deploy:devnet          # Deploy program binaries to devnet
 pnpm devnet:full            # Oracles + governor pool + lending market
-pnpm devnet:complete        # Whitelist + mint + dUSDY reserve + config
+pnpm devnet:complete        # Whitelist + mint + cUSDY reserve + config
 ```
 
 ### Individual Steps
 
 ```bash
 pnpm devnet:oracles         # Create mock USDC oracle on devnet
-pnpm devnet:governor        # Initialize governor pool + dUSDY mint
+pnpm devnet:governor        # Initialize governor pool + cUSDY mint
 pnpm devnet:market          # Create klend market + USDC reserve
-pnpm devnet:complete        # Whitelist, mint dUSDY, init dUSDY reserve, configure
+pnpm devnet:complete        # Whitelist, mint cUSDY, init cUSDY reserve, configure
 ```
 
 ### Devnet Addresses (current deployment)
@@ -355,11 +355,11 @@ pnpm devnet:complete        # Whitelist, mint dUSDY, init dUSDY reserve, configu
 |---|---|
 | delta-mint program | `13Su8nR5NBzQ7UwFFUiNAH1zH5DQtLyjezhbwRREQkEn` |
 | governor program | `BrZYcbPBt9nW4b6xUSodwXRfAfRNZTCzthp1ywMG3KJh` |
-| dUSDY mint (Token-2022) | `ALqRkS5GdVYWUFLzsL3xbKCxkoMxe2p23UUP9Waddwfx` |
+| cUSDY mint (Token-2022) | `ALqRkS5GdVYWUFLzsL3xbKCxkoMxe2p23UUP9Waddwfx` |
 | Governor pool | `5dkknYzVfeVdwNSxR1gUXTz2mKoXEtFhZ8jnDCduFRpb` |
 | Lending market | `3LDsUGQzaHuaPwirk5Ty38rsB6XKKrHKjvWzYFygBpQ6` |
 | USDC reserve | `5jtmhs5T4JtparKJs6QDxega3v16vLzvNkXq2CzE23vw` |
-| dUSDY reserve | `BRpvzwVmBBzLSU7ZcJgeoSNbcwJ8fvvC9Zy2Avqoj1L1` |
+| cUSDY reserve | `BRpvzwVmBBzLSU7ZcJgeoSNbcwJ8fvvC9Zy2Avqoj1L1` |
 | USDY oracle (Pyth V2) | `E4pitSrZV9MWSspahe2vr26Cwsn3podnvHvW3cuT74R4` |
 
 ### Environment

@@ -239,7 +239,7 @@ Total: ~4 weeks of focused work for v1.
 | Thin AMM liquidity on fresh markets | Seed liquidity from a Clearstone treasury position; curator vaults concentrate liquidity on a few maturities rather than fragmenting. |
 | Auto-roll MEV at maturity | Per-policy `min_pt_out` slippage bound; cranker tip small enough that sandwich attack is unprofitable; optional private-RPC submission. |
 | Kamino reserve being paused / frozen | SY adapter exposes a `pause_sy` that the *SY creator* (not a global admin) can set — PTs remain redeemable for SY, users just can't unwrap to USDC until Kamino is live. Document this failure mode on the UI. |
-| Token-2022 vs SPL mismatch | USDC/USDT are both SPL. If a KYC-gated vault issues Token-2022 shares, the share mint is Token-2022 but the underlying is SPL — same pattern as existing dUSDY wrapping, no new ground. |
+| Token-2022 vs SPL mismatch | USDC/USDT are both SPL. If a KYC-gated vault issues Token-2022 shares, the share mint is Token-2022 but the underlying is SPL — same pattern as existing cUSDY wrapping, no new ground. |
 
 ## 7. What ships in this repo vs the fork
 

@@ -8,6 +8,7 @@ import { PhantomWalletAdapter } from "@solana/wallet-adapter-wallets";
 import "@solana/wallet-adapter-react-ui/styles.css";
 
 import { RPC_URL } from "./lib/addresses";
+import CreditTradeTab from "./tabs/CreditTradeTab";
 import JitoRestakingTab from "./tabs/JitoRestakingTab";
 import LendingPositionTab from "./tabs/LendingPositionTab";
 import OneStepDepositTab from "./tabs/OneStepDepositTab";
@@ -16,6 +17,7 @@ import OneStepUnwindTab from "./tabs/OneStepUnwindTab";
 type Tab = { id: string; label: string; render: () => JSX.Element };
 
 const TABS: Tab[] = [
+  { id: "credit-trade", label: "Credit Trade (leveraged)", render: () => <CreditTradeTab /> },
   { id: "jito-restaking", label: "Jito Restaking", render: () => <JitoRestakingTab /> },
   { id: "one-step-deposit", label: "1-tx SOL → klend collateral", render: () => <OneStepDepositTab /> },
   { id: "lending-position", label: "Lending position (balance sheet)", render: () => <LendingPositionTab /> },

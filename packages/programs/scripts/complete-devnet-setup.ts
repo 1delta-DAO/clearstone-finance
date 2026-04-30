@@ -4,8 +4,8 @@
  * Completes the devnet deployment by:
  *   1. Configuring the USDC reserve (updateReserveConfig via updateEntireReserveConfig)
  *   2. Whitelisting the authority wallet via governor add_participant
- *   3. Minting dUSDY tokens via governor mint_wrapped
- *   4. Initializing the dUSDY reserve with a seed deposit
+ *   3. Minting cUSDY tokens via governor mint_wrapped
+ *   4. Initializing the cUSDY reserve with a seed deposit
  *
  * Prerequisites:
  *   - pnpm devnet:full has been run (governor pool, market, USDC reserve created)
@@ -173,7 +173,7 @@ async function main() {
   console.log(`  Authority:    ${authority.publicKey.toBase58()}`);
   console.log(`  Balance:      ${(balance / 1e9).toFixed(4)} SOL`);
   console.log(`  Pool:         ${poolConfig.toBase58()}`);
-  console.log(`  dUSDY mint:   ${wrappedMint.toBase58()}`);
+  console.log(`  cUSDY mint:   ${wrappedMint.toBase58()}`);
   console.log(`  Market:       ${marketAddress.toBase58()}`);
   console.log(`  USDC reserve: ${usdcReserveAddress.toBase58()}`);
   console.log("============================================\n");
@@ -291,11 +291,11 @@ async function main() {
   }
 
   // =========================================================================
-  // Step 3: Mint dUSDY tokens via governor mint_wrapped
+  // Step 3: Mint cUSDY tokens via governor mint_wrapped
   // =========================================================================
-  console.log("\n--- Step 3: Mint dUSDY tokens ---");
+  console.log("\n--- Step 3: Mint cUSDY tokens ---");
 
-  // Create ATA for dUSDY (Token-2022)
+  // Create ATA for cUSDY (Token-2022)
   let dUsdyAta: PublicKey;
   try {
     const ata = await getOrCreateAssociatedTokenAccount(
@@ -303,13 +303,13 @@ async function main() {
       undefined, TOKEN_2022_PROGRAM_ID
     );
     dUsdyAta = ata.address;
-    console.log(`  dUSDY ATA: ${dUsdyAta.toBase58()}`);
+    console.log(`  cUSDY ATA: ${dUsdyAta.toBase58()}`);
   } catch (e: any) {
-    console.error(`  Failed to create dUSDY ATA: ${e.message}`);
+    console.error(`  Failed to create cUSDY ATA: ${e.message}`);
     return;
   }
 
-  // Mint 1000 dUSDY (1_000_000_000 with 6 decimals)
+  // Mint 1000 cUSDY (1_000_000_000 with 6 decimals)
   const mintAmount = 1_000_000_000; // 1000 tokens
   try {
     const sig = await (governorProgram.methods as any)
@@ -326,25 +326,25 @@ async function main() {
         tokenProgram: TOKEN_2022_PROGRAM_ID,
       })
       .rpc();
-    console.log(`  Minted 1000 dUSDY: ${sig}`);
+    console.log(`  Minted 1000 cUSDY: ${sig}`);
   } catch (e: any) {
     console.error(`  Mint failed: ${e.message}`);
     if (e.logs) console.error("  Logs:", e.logs.slice(-3).join("\n    "));
   }
 
   // =========================================================================
-  // Step 4: Initialize dUSDY reserve (or reuse existing)
+  // Step 4: Initialize cUSDY reserve (or reuse existing)
   // =========================================================================
-  console.log("\n--- Step 4: Initialize dUSDY reserve ---");
+  console.log("\n--- Step 4: Initialize cUSDY reserve ---");
 
   let dUsdyReserveAddress: PublicKey;
-  const existingDusdyReserve = marketConfig.reserves?.dUSDY?.address;
+  const existingDusdyReserve = marketConfig.reserves?.cUSDY?.address;
 
   if (existingDusdyReserve && existingDusdyReserve !== "pending") {
     dUsdyReserveAddress = new PublicKey(existingDusdyReserve);
     const info = await conn.getAccountInfo(dUsdyReserveAddress);
     if (info) {
-      console.log(`  dUSDY reserve already exists: ${dUsdyReserveAddress.toBase58()}`);
+      console.log(`  cUSDY reserve already exists: ${dUsdyReserveAddress.toBase58()}`);
     } else {
       console.log(`  Config references ${dUsdyReserveAddress.toBase58()} but not found on-chain. Creating new.`);
       dUsdyReserveAddress = null as any;
@@ -377,10 +377,10 @@ async function main() {
     try {
       const sig = await sendAndConfirmTransaction(conn, tx4, [authority, dUsdyReserveKp]);
       dUsdyReserveAddress = dUsdyReserveKp.publicKey;
-      console.log(`  dUSDY reserve created: ${dUsdyReserveAddress.toBase58()}`);
+      console.log(`  cUSDY reserve created: ${dUsdyReserveAddress.toBase58()}`);
       console.log(`  Tx: ${sig}`);
     } catch (e: any) {
-      console.error(`  dUSDY reserve failed: ${e.message}`);
+      console.error(`  cUSDY reserve failed: ${e.message}`);
       if (e.logs) {
         const relevant = e.logs.filter((l: string) => l.includes("Error") || l.includes("log:"));
         console.error("  Logs:", relevant.slice(-5).join("\n    "));
@@ -389,9 +389,9 @@ async function main() {
     }
   }
 
-  // Configure dUSDY reserve
+  // Configure cUSDY reserve
   if (dUsdyReserveAddress && await conn.getAccountInfo(dUsdyReserveAddress)) {
-    console.log("\n  Configuring dUSDY reserve...");
+    console.log("\n  Configuring cUSDY reserve...");
     const dUsdyConfigs = [
       { name: "UpdatePythPrice", mode: 20, value: usdyOracle.toBuffer() },
       { name: "UpdateLoanToValuePct", mode: 0, value: Buffer.from([75]) },
@@ -456,7 +456,7 @@ async function main() {
     ...marketConfig,
     reserves: {
       ...marketConfig.reserves,
-      dUSDY: {
+      cUSDY: {
         status: "created",
         address: dUsdyReserveAddress.toBase58(),
         mint: wrappedMint.toBase58(),
@@ -478,8 +478,8 @@ async function main() {
   console.log("============================================");
   console.log(`  Market:         ${marketAddress.toBase58()}`);
   console.log(`  USDC reserve:   ${usdcReserveAddress.toBase58()}`);
-  console.log(`  dUSDY reserve:  ${dUsdyReserveAddress.toBase58()}`);
-  console.log(`  dUSDY mint:     ${wrappedMint.toBase58()}`);
+  console.log(`  cUSDY reserve:  ${dUsdyReserveAddress.toBase58()}`);
+  console.log(`  cUSDY mint:     ${wrappedMint.toBase58()}`);
   console.log(`  Whitelisted:    ${authority.publicKey.toBase58()}`);
   console.log("============================================");
 }

@@ -48,8 +48,8 @@ const RESERVES: Record<string, {
     ltvPct: 0, liqThresholdPct: 0,
     depositLimit: 1_000_000_000_000_000n, borrowLimit: 1_000_000_000_000_000n,
   },
-  deUSX: {
-    name: "deUSX", mint: new PublicKey("8Uy7rmtAZvnQA1SuYZJKKBXFovHDPEYXiYH3H6iQMRwT"),
+  ceUSX: {
+    name: "ceUSX", mint: new PublicKey("8Uy7rmtAZvnQA1SuYZJKKBXFovHDPEYXiYH3H6iQMRwT"),
     tokenProgram: TOKEN_2022_PROGRAM_ID, price: 1.08,
     ltvPct: 75, liqThresholdPct: 85,
     depositLimit: 1_000_000_000_000_000n, borrowLimit: 0n,
@@ -113,7 +113,7 @@ async function main() {
   const curveIdx = args.indexOf("--curve");
 
   if (reserveIdx === -1) {
-    console.log("Usage: npx tsx scripts/replace-reserve-irm.ts --reserve <sUSDC|dtUSDY|deUSX> --curve <stable|moderate|steep|JSON>");
+    console.log("Usage: npx tsx scripts/replace-reserve-irm.ts --reserve <sUSDC|dtUSDY|ceUSX> --curve <stable|moderate|steep|JSON>");
     console.log("\nPresets:");
     for (const [k, pts] of Object.entries(CURVE_PRESETS)) {
       console.log(`  ${k}: ${pts.map(([u,r]) => `${u/100}%→${r/100}%`).join(", ")}`);

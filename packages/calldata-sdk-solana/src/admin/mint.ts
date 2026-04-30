@@ -43,7 +43,7 @@ export function initializeMint(
  * Adds an address to the KYC whitelist for a given mint.
  *
  * @param authority  Signer — must be mint authority
- * @param mint       The dUSDY mint
+ * @param mint       The cUSDY mint
  * @param wallet     The wallet to whitelist
  */
 export function addToWhitelist(
@@ -70,10 +70,10 @@ export function addToWhitelist(
 
 /**
  * Build the `mint_tokens` instruction.
- * Mints dUSDY to a whitelisted wallet's ATA.
+ * Mints cUSDY to a whitelisted wallet's ATA.
  *
  * @param authority  Signer — must be mint authority
- * @param mint       The dUSDY mint
+ * @param mint       The cUSDY mint
  * @param recipient  Whitelisted wallet receiving tokens
  * @param amount     Amount in base units (6 decimals)
  */

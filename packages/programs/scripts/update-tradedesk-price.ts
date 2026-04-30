@@ -7,7 +7,7 @@
  * Examples:
  *   npx tsx scripts/update-tradedesk-price.ts "USDY/USD" 1.08
  *   npx tsx scripts/update-tradedesk-price.ts "USDC/USD" 1.00
- *   npx tsx scripts/update-tradedesk-price.ts "dUSDY/USD" 1.08
+ *   npx tsx scripts/update-tradedesk-price.ts "cUSDY/USD" 1.08
  */
 
 import { Connection, Keypair, PublicKey, SystemProgram } from "@solana/web3.js";

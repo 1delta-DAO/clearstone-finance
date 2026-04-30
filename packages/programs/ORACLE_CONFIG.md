@@ -30,10 +30,10 @@ Scope is Kamino's proprietary oracle program (`HFn8GnPADiny6XqUoWE8uRPPxb29ikn4y
 
 | Reserve | Oracle Provider | Feed Address | Token |
 |---------|----------------|--------------|-------|
-| dUSDY (collateral) | Pyth | `BkN8hYgRjhyH18aBsuzvMSyMTBRkDrGs1PTgMbBFpnLb` | USDY/USD |
+| cUSDY (collateral) | Pyth | `BkN8hYgRjhyH18aBsuzvMSyMTBRkDrGs1PTgMbBFpnLb` | USDY/USD |
 | USDC (borrow) | Pyth | `Gnt27xtC473ZT2Mw5u8wZ68Z3gULkSTb5DuxJy7eJotD` | USDC/USD |
 
-dUSDY uses the underlying USDY price feed since it's a 1:1 wrapped token.
+cUSDY uses the underlying USDY price feed since it's a 1:1 wrapped token.
 
 ## TokenInfo Configuration
 
@@ -42,7 +42,7 @@ Each reserve's `tokenInfo` in the JSON config controls oracle behavior:
 ```json
 {
   "tokenInfo": {
-    "name": "dUSDY",
+    "name": "cUSDY",
     "pythConfiguration": {
       "price": "BkN8hYgRjhyH18aBsuzvMSyMTBRkDrGs1PTgMbBFpnLb"
     },
@@ -114,7 +114,7 @@ Oracle feeds are set post-reserve-initialization using `updateReserveConfig`:
 ```typescript
 import { updateReserveConfig, pubkeyValue, CONFIG_MODE } from "@delta/calldata-sdk-solana";
 
-// Set Pyth oracle on the dUSDY reserve
+// Set Pyth oracle on the cUSDY reserve
 const ix = updateReserveConfig(
   ownerPubkey,
   marketPubkey,

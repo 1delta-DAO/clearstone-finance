@@ -71,7 +71,7 @@ All of the following was written by the team during the hackathon window:
 
 ### Reserve Configurations — [packages/programs/configs/](packages/programs/configs/)
 
-- `delta_usdy_reserve.json` — dUSDY collateral reserve (95% LTV, 97% liq.
+- `delta_usdy_reserve.json` — cUSDY collateral reserve (95% LTV, 97% liq.
   threshold, Pyth oracle, borrow-disabled).
 - `usdc_borrow_reserve.json` — USDC borrow reserve with tuned IRM curve.
 

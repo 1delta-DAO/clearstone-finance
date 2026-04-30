@@ -155,10 +155,14 @@ export default function WrapPanel() {
 
   return (
     <div className="flex flex-col gap-6">
-      <p className="opacity-50 text-sm">
-        Wrap underlying tokens into KYC-gated d-tokens (1:1 backed), or unwrap d-tokens back to the underlying.
-        Requires KYC whitelist approval.
-      </p>
+      <div>
+        <span className="eyebrow">Operator</span>
+        <h2 className="text-2xl mt-1">Wrap</h2>
+        <p className="text-sm text-base-content/55 mt-1">
+          Wrap underlying tokens into KYC-gated d-tokens (1:1 backed) or unwrap d-tokens back. Requires
+          KYC whitelist approval.
+        </p>
+      </div>
 
       {status && (
         <div role="alert" className={`alert ${status.type === "ok" ? "alert-success" : status.type === "err" ? "alert-error" : "alert-info"}`}>
@@ -167,7 +171,7 @@ export default function WrapPanel() {
       )}
 
       {/* Balances overview */}
-      <div className="card bg-base-200 border border-base-300 shadow-sm">
+      <div className="panel">
         <div className="card-body p-6 gap-4">
           <h3 className="card-title text-base">Token Balances</h3>
           <div className="overflow-x-auto">
@@ -198,7 +202,7 @@ export default function WrapPanel() {
       </div>
 
       {/* Wrap / Unwrap form */}
-      <div className="card bg-base-200 border border-base-300 shadow-sm">
+      <div className="panel">
         <div className="card-body p-6 gap-4">
           <div className="flex items-center gap-3">
             <h3 className="card-title text-base flex-1">

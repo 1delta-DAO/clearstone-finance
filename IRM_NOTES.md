@@ -49,7 +49,7 @@ Market: `45FNL648aXgbMoMzLfYE2vCZAtWWDCky2tYLCEUztc98`
 
 These were created during earlier setup but klend locked their config:
 
-- `HoEa26bHi96mwAu3joQZKcyxhG9jXyJvaxLNuvjcwZmw` — old dUSDY
+- `HoEa26bHi96mwAu3joQZKcyxhG9jXyJvaxLNuvjcwZmw` — old cUSDY
 - `7fYbqqcWnUvz3ffH6knnRRoRhDYaK4MgHH8Cj1Uwii4j` — old USDC
 - `GwcTF1uxH7SCmRjo5dGb121daRaDXod3tJcY8CPofgtf` — old Solstice USDC
 - `HCQrPVyfPxqzTLwmEBb1Fo91JcNeCb6gsCT5B9PRxBhV` — intermediate sUSDC (replaced)

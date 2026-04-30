@@ -203,7 +203,7 @@ async function main() {
         .rpc();
 
       console.log(`  Pool created: ${poolConfig.toBase58()}`);
-      console.log(`  dUSDY mint:   ${wrappedMintPubkey.toBase58()}`);
+      console.log(`  cUSDY mint:   ${wrappedMintPubkey.toBase58()}`);
       console.log(`  Tx: ${sig}\n`);
     } catch (e: any) {
       console.error("  Pool creation failed:", e.message);

@@ -1,6 +1,6 @@
 # Jupiter Offerbook — Integration Assessment
 
-Evaluation of **Jupiter Offerbook** as a second credit channel for dUSDY (KYC-gated, Token-2022 wrapped USDY). Assessed from the perspective of a team that already operates a dUSDY market on Kamino Lend V2.
+Evaluation of **Jupiter Offerbook** as a second credit channel for cUSDY (KYC-gated, Token-2022 wrapped USDY). Assessed from the perspective of a team that already operates a cUSDY market on Kamino Lend V2.
 
 **Bottom line:** Offerbook is a fundamentally different shape (P2P term loans, no liquidation) from the Kamino pool model. It eliminates oracle-manipulation and liquidation-cascade risk — attractive for regulated use — but the KYC-recipient problem is *restructured*, not solved, and several integration details are not publicly documented as of April 2026.
 
@@ -28,9 +28,9 @@ Offers cannot be edited — only renewed.
 | Debt (borrow/lend) | **USDC only** at launch |
 | Collateral | Any Jupiter "verified" SPL token, **xStocks** (RWAs), **NFTs** |
 
-**Token-2022 support is unverified.** The companion `jupiter-lend` codebase handles both classic SPL and Token-2022 (`crates/library/src/token/spl.rs`), suggesting infra-level awareness, but **no public statement on confidential-transfer or transfer-hook compatibility for Offerbook specifically**. This is the single biggest blocker for a dUSDY integration and must be probed on-chain or confirmed with Jupiter directly.
+**Token-2022 support is unverified.** The companion `jupiter-lend` codebase handles both classic SPL and Token-2022 (`crates/library/src/token/spl.rs`), suggesting infra-level awareness, but **no public statement on confidential-transfer or transfer-hook compatibility for Offerbook specifically**. This is the single biggest blocker for a cUSDY integration and must be probed on-chain or confirmed with Jupiter directly.
 
-Note: `ConfidentialTransfer` and `TransferHook` are mutually exclusive extensions in Token-2022. dUSDY uses the confidential-transfer path, so KYC is enforced at the mint/whitelist layer — matching the Kamino V2 design assumption.
+Note: `ConfidentialTransfer` and `TransferHook` are mutually exclusive extensions in Token-2022. cUSDY uses the confidential-transfer path, so KYC is enforced at the mint/whitelist layer — matching the Kamino V2 design assumption.
 
 ## 3. Permissionlessness
 
@@ -41,7 +41,7 @@ Note: `ConfidentialTransfer` and `TransferHook` are mutually exclusive extension
   - Repayment: **10% of interest**, deducted from lender's payout
   - Default/claim: **0.1% of collateral value** (NFTs/RWAs exempt)
 
-## 4. Collateral Handling on Default — Critical for dUSDY
+## 4. Collateral Handling on Default — Critical for cUSDY
 
 Collateral sits in an Offerbook-managed escrow PDA during the loan. On default, **the lender signs a transaction to pull the collateral into their own wallet**.
 
@@ -52,13 +52,13 @@ This is the same structural problem as Kamino V2 liquidation — the collateral'
 | Kamino V2 | Liquidator bot → mitigated via `add_liquidator` role |
 | Offerbook | **The lender directly** |
 
-Implications for dUSDY as collateral:
+Implications for cUSDY as collateral:
 
-- The lender (not a liquidator bot) becomes the direct recipient → the lender **must be KYC-whitelisted on the dUSDY mint**.
+- The lender (not a liquidator bot) becomes the direct recipient → the lender **must be KYC-whitelisted on the cUSDY mint**.
 - Offerbook has no visibility into Holder/Liquidator roles and no known hook for unwinding a wrapped asset on claim.
 - Mitigation options:
-  1. Restrict dUSDY offers to a KYC'd lender set via **off-chain UX gating** (we accept only offers from whitelisted lenders).
-  2. Route the claim through a **custom unwind program** that exchanges dUSDY for an unrestricted form at claim time.
+  1. Restrict cUSDY offers to a KYC'd lender set via **off-chain UX gating** (we accept only offers from whitelisted lenders).
+  2. Route the claim through a **custom unwind program** that exchanges cUSDY for an unrestricted form at claim time.
   3. Require lender KYC proof before offer acceptance (off-chain).
 
 No public evidence Offerbook special-cases transfer hooks or mint-level whitelists on the claim path.
@@ -80,9 +80,9 @@ No promissory-note NFT, no fungible receipt token, no assignment instruction, no
 
 **Contrast with Jupiter Lend** (the pool product, distinct from Offerbook): Jupiter Lend issues fungible **jTokens** as transferable share receipts — composable, usable as collateral elsewhere. Offerbook issues nothing. Any composability intuition from Jupiter Lend does **not** carry over to Offerbook.
 
-### Implications for dUSDY as collateral
+### Implications for cUSDY as collateral
 
-- **Good:** No tokenized lender-position means no secondary market where a non-KYC'd party could acquire a claim on dUSDY collateral. The KYC enforcement surface is smaller than it would be on a loan-note protocol.
+- **Good:** No tokenized lender-position means no secondary market where a non-KYC'd party could acquire a claim on cUSDY collateral. The KYC enforcement surface is smaller than it would be on a loan-note protocol.
 - **Unchanged:** The lender is still the direct claim recipient on default (§4). The absence of a position-transfer rail means there's no extra gating surface to build — but also no rail on which to reroute the claim through a KYC-aware custodian.
 - **Operational:** Lender capital is illiquid for the full 3-day term once an offer is filled. No early-exit for the lender. For institutional lenders this is a hard constraint, not a nuance.
 
@@ -135,7 +135,7 @@ This is a materially worse integration posture than Kamino V2 (open source, full
 | Asset breadth | Wide (NFTs, RWAs, long-tail) | Limited to pool-listed assets |
 | KYC collateral fit | Lender is recipient → eligibility problem | Liquidator is recipient → eligibility problem |
 
-### When Offerbook makes sense for dUSDY
+### When Offerbook makes sense for cUSDY
 
 - As a **complementary fixed-term product**, not a primary credit channel — the 3-day USDC-only constraint limits it to a term-loan desk rather than always-on liquidity.
 - As a **regulator-friendly venue** — no oracles, no liquidations, no forced sale of client collateral under market stress.
@@ -157,7 +157,7 @@ This is a materially worse integration posture than Kamino V2 (open source, full
 
 ## Open Items Before Integration
 
-These must be resolved before a production dUSDY integration on Offerbook:
+These must be resolved before a production cUSDY integration on Offerbook:
 
 | # | Item | Blocking for |
 |---|---|---|

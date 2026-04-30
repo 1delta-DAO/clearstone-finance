@@ -2,7 +2,7 @@
  * setup-eusx-market.ts — Create klend reserves for the eUSX collateral market
  *
  * Creates:
- *   - deUSX reserve (collateral, yield-bearing, $1.08)
+ *   - ceUSX reserve (collateral, yield-bearing, $1.08)
  *   - Solstice USDC reserve (borrow asset, $1.00)
  *   - Oracles for both (PriceUpdateV2 format)
  *   - Full reserve configuration (LTV, limits, borrow curve)
@@ -108,7 +108,7 @@ async function createReserve(
   // Need seed deposit — create a test token if we don't have one
   let seedAta: PublicKey;
   if (tokenProgram.equals(TOKEN_2022_PROGRAM_ID)) {
-    // Token-2022 (deUSX)
+    // Token-2022 (ceUSX)
     const ata = await getOrCreateAssociatedTokenAccount(conn, auth, mint, auth.publicKey, false, undefined, undefined, tokenProgram);
     seedAta = ata.address;
   } else {
@@ -233,18 +233,18 @@ async function main() {
 
   // Step 1: Create oracles
   console.log("=== Step 1: Create Oracles ===");
-  const deusxOracle = await createOracle(conn, auth, 1.08, "deUSX");
+  const deusxOracle = await createOracle(conn, auth, 1.08, "ceUSX");
   const solUsdcOracle = await createOracle(conn, auth, 1.00, "Solstice USDC");
 
-  // Step 2: Create deUSX reserve (Token-2022)
-  console.log("\n=== Step 2: Create deUSX Reserve (Collateral) ===");
+  // Step 2: Create ceUSX reserve (Token-2022)
+  console.log("\n=== Step 2: Create ceUSX Reserve (Collateral) ===");
   let deusxReserve: PublicKey;
   try {
     deusxReserve = await createReserve(conn, auth, DEUSX, TOKEN_2022_PROGRAM_ID);
     console.log(`  Reserve: ${deusxReserve.toBase58()}`);
   } catch (e: any) {
     console.log(`  Failed: ${e.message?.slice(0, 100)}`);
-    console.log(`  (deUSX reserve may need a seed deposit of deUSX tokens first)`);
+    console.log(`  (ceUSX reserve may need a seed deposit of ceUSX tokens first)`);
     return;
   }
 
@@ -261,15 +261,15 @@ async function main() {
   }
 
   // Step 4: Configure reserves
-  console.log("\n=== Step 4: Configure deUSX Reserve ===");
-  await configureReserve(conn, auth, deusxReserve, deusxOracle, "deUSX");
+  console.log("\n=== Step 4: Configure ceUSX Reserve ===");
+  await configureReserve(conn, auth, deusxReserve, deusxOracle, "ceUSX");
 
   console.log("\n=== Step 5: Configure Solstice USDC Reserve ===");
   await configureReserve(conn, auth, solUsdcReserve, solUsdcOracle, "sUSDC");
 
   // Step 6: Test RefreshReserve
   console.log("\n=== Step 6: Verify RefreshReserve ===");
-  for (const [name, reserve, oracle] of [["deUSX", deusxReserve, deusxOracle], ["sUSDC", solUsdcReserve, solUsdcOracle]] as const) {
+  for (const [name, reserve, oracle] of [["ceUSX", deusxReserve, deusxOracle], ["sUSDC", solUsdcReserve, solUsdcOracle]] as const) {
     const tx = new Transaction();
     tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 }));
     tx.add({ programId: KLEND, data: disc("refresh_reserve"), keys: [
@@ -288,7 +288,7 @@ async function main() {
   const config = {
     market: MARKET.toBase58(),
     collateral: {
-      name: "deUSX",
+      name: "ceUSX",
       reserve: deusxReserve.toBase58(),
       mint: DEUSX.toBase58(),
       underlying: EUSX.toBase58(),
@@ -312,7 +312,7 @@ async function main() {
   console.log("\n╔══════════════════════════════════════════════╗");
   console.log("║    eUSX Market Ready                          ║");
   console.log("╚══════════════════════════════════════════════╝");
-  console.log(`  Collateral: deUSX ${deusxReserve.toBase58().slice(0, 12)}... ($1.08)`);
+  console.log(`  Collateral: ceUSX ${deusxReserve.toBase58().slice(0, 12)}... ($1.08)`);
   console.log(`  Borrow:     sUSDC ${solUsdcReserve.toBase58().slice(0, 12)}... ($1.00)`);
   console.log(`  Config:     ${outPath}`);
 }

@@ -1,5 +1,5 @@
 {
-  "_comment": "dUSDY collateral reserve — DEVNET config",
+  "_comment": "cUSDY collateral reserve — DEVNET config",
   "_oracle_note": "Uses Pyth V2 USDY/USD feed on devnet (E4pit...)",
 
   "status": 0,
@@ -34,7 +34,7 @@
   },
 
   "tokenInfo": {
-    "name": "dUSDY",
+    "name": "cUSDY",
     "heuristic": { "exp": "0", "lower": "0", "upper": "0" },
     "maxTwapDivergenceBps": "4050",
     "maxAgePriceSeconds": "120",

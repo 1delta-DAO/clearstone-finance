@@ -252,12 +252,12 @@ export default function PreparePage() {
     }
   }
 
-  // Step 3: Wrap eUSX → deUSX via Governor
+  // Step 3: Wrap eUSX → ceUSX via Governor
   async function handleWrapEUSX() {
     if (!publicKey) return;
     setLoading(true);
     setStep("wrapping_deusx");
-    setStatus({ msg: "Wrapping eUSX → deUSX (KYC-gated)...", type: "info" });
+    setStatus({ msg: "Wrapping eUSX → ceUSX (KYC-gated)...", type: "info" });
 
     try {
       const wrapAmount = Math.floor(balances.eusx * 1e6);
@@ -276,7 +276,7 @@ export default function PreparePage() {
 
       const tx = new Transaction();
 
-      // Create deUSX ATA if needed
+      // Create ceUSX ATA if needed
       const deusxAtaInfo = await connection.getAccountInfo(userDeusxAta);
       if (!deusxAtaInfo) {
         tx.add(createAssociatedTokenAccountInstruction(
@@ -318,7 +318,7 @@ export default function PreparePage() {
 
       setStatus({ msg: "Sign wrap transaction...", type: "info" });
       const sig = await signAndSend(tx);
-      setStatus({ msg: `Wrapped ${(wrapAmount / 1e6).toFixed(2)} eUSX → deUSX`, type: "success" });
+      setStatus({ msg: `Wrapped ${(wrapAmount / 1e6).toFixed(2)} eUSX → ceUSX`, type: "success" });
       await loadBalances();
     } catch (e: any) {
       setStatus({ msg: e.message?.slice(0, 120) || "Wrap failed", type: "error" });
@@ -331,15 +331,16 @@ export default function PreparePage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold">Prepare Collateral</h2>
-        <p className="text-sm text-base-content/50 mt-1">
-          Convert stablecoins into yield-bearing KYC-gated collateral (deUSX)
+        <span className="eyebrow">Onboard</span>
+        <h2 className="text-2xl mt-1">Prepare Collateral</h2>
+        <p className="text-sm text-base-content/55 mt-1">
+          Convert stablecoins into yield-bearing KYC-gated collateral (ceUSX).
         </p>
       </div>
 
       {/* API Key — only show input if not loaded from env */}
       {apiKey ? null : (
-      <div className="card bg-base-200 border border-base-300">
+      <div className="panel">
         <div className="card-body p-5">
           <div className="flex items-center gap-3">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-warning shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>
@@ -365,9 +366,9 @@ export default function PreparePage() {
           { label: "USDT", value: balances.usdt, color: "text-success" },
           { label: "USX", value: balances.usx, color: "text-primary" },
           { label: "eUSX", value: balances.eusx, color: "text-warning" },
-          { label: "deUSX", value: balances.deusx, color: "text-accent" },
+          { label: "ceUSX", value: balances.deusx, color: "text-accent" },
         ].map(t => (
-          <div key={t.label} className="card bg-base-200 border border-base-300">
+          <div key={t.label} className="panel">
             <div className="card-body p-4 items-center text-center gap-1">
               <div className="text-xs text-base-content/50">{t.label}</div>
               <div className={`text-lg font-bold font-mono ${t.color}`}>
@@ -381,7 +382,7 @@ export default function PreparePage() {
       {/* Pipeline Steps */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Step 1: Mint USX */}
-        <div className="card bg-base-200 border border-base-300">
+        <div className="panel">
           <div className="card-body p-6 gap-4">
             <div className="flex items-center gap-2">
               <div className="badge badge-primary badge-lg font-bold">1</div>
@@ -427,7 +428,7 @@ export default function PreparePage() {
         </div>
 
         {/* Step 2: Lock → eUSX */}
-        <div className="card bg-base-200 border border-base-300">
+        <div className="panel">
           <div className="card-body p-6 gap-4">
             <div className="flex items-center gap-2">
               <div className="badge badge-warning badge-lg font-bold">2</div>
@@ -450,15 +451,15 @@ export default function PreparePage() {
           </div>
         </div>
 
-        {/* Step 3: Wrap → deUSX */}
-        <div className="card bg-base-200 border border-base-300">
+        {/* Step 3: Wrap → ceUSX */}
+        <div className="panel">
           <div className="card-body p-6 gap-4">
             <div className="flex items-center gap-2">
               <div className="badge badge-accent badge-lg font-bold">3</div>
               <h3 className="font-bold">KYC Wrap</h3>
             </div>
             <p className="text-xs text-base-content/50">
-              Wrap eUSX → deUSX (KYC-gated collateral). Requires whitelist approval.
+              Wrap eUSX → ceUSX (KYC-gated collateral). Requires whitelist approval.
             </p>
             <div className="bg-base-300 rounded-lg p-3 text-center">
               <span className="text-sm text-base-content/50">Available: </span>
@@ -469,7 +470,7 @@ export default function PreparePage() {
               onClick={handleWrapEUSX}
               disabled={loading || balances.eusx <= 0}
             >
-              {step === "wrapping_deusx" ? <span className="loading loading-spinner loading-sm" /> : `Wrap ${balances.eusx.toFixed(2)} eUSX → deUSX`}
+              {step === "wrapping_deusx" ? <span className="loading loading-spinner loading-sm" /> : `Wrap ${balances.eusx.toFixed(2)} eUSX → ceUSX`}
             </button>
           </div>
         </div>
@@ -490,7 +491,7 @@ export default function PreparePage() {
         <div className="alert alert-info">
           <svg xmlns="http://www.w3.org/2000/svg" className="stroke-current shrink-0 h-5 w-5" fill="none" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
           <span className="text-sm">
-            You have {balances.eusx.toFixed(2)} eUSX. Skip to Step 3 to wrap directly into deUSX collateral.
+            You have {balances.eusx.toFixed(2)} eUSX. Skip to Step 3 to wrap directly into ceUSX collateral.
           </span>
         </div>
       )}
@@ -499,7 +500,7 @@ export default function PreparePage() {
         <div className="alert alert-success">
           <svg xmlns="http://www.w3.org/2000/svg" className="stroke-current shrink-0 h-5 w-5" fill="none" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
           <span className="text-sm">
-            You have {balances.deusx.toFixed(2)} deUSX ready to deposit as collateral.
+            You have {balances.deusx.toFixed(2)} ceUSX ready to deposit as collateral.
             Go to <strong>Supply Collateral</strong> tab.
           </span>
         </div>

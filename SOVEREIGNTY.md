@@ -2,7 +2,7 @@
 
 Assessment of how much control the host protocol's governance / admin retains over a permissionlessly-created market after we deploy into it. Specifically: **can Kamino / Save / Marginfi governance shut down, pause, override, or redirect value from a market we own?**
 
-**Scope:** dUSDY (Token-2022, KYC-gated) as collateral on a permissionless market.
+**Scope:** cUSDY (Token-2022, KYC-gated) as collateral on a permissionless market.
 
 **Legend:** **[V]** verified from source / official docs · **[I]** inferred, needs on-chain confirmation.
 
@@ -105,7 +105,7 @@ Sovereignty score 1–5 (higher = more sovereign). Scores reflect **what the pro
 
 ## Recommendation
 
-For dUSDY (Token-2022, KYC-gated):
+For cUSDY (Token-2022, KYC-gated):
 
 1. **Kamino V2** is the strongest of the three **at the state level**, provided two verifications pass:
    - Upgrade authority is a credibly-neutral multisig with reasonable threshold.

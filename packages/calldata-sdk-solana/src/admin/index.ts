@@ -2,11 +2,11 @@
  * Admin / Governance namespace
  *
  * Operations restricted to the market authority / KYC operator:
- *   - Initialize dUSDY mint (Token-2022 + confidential transfers)
+ *   - Initialize cUSDY mint (Token-2022 + confidential transfers)
  *   - Whitelist management (add/remove KYC'd addresses)
- *   - Mint dUSDY to whitelisted wallets
+ *   - Mint cUSDY to whitelisted wallets
  *   - Create klend lending market
- *   - Initialize reserves (dUSDY collateral, USDC borrow)
+ *   - Initialize reserves (cUSDY collateral, USDC borrow)
  *   - Configure reserves (LTV, oracle, limits)
  */
 

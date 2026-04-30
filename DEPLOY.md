@@ -364,7 +364,7 @@ Steps 10–12 are permissionless per-fill.
 
 Standalone path that brings up a fresh klend market for the csSOL/wSOL pair
 inside elevation group 2 (LST collateralizes SOL borrowing). Independent of
-the dUSDY market — runs beside it without migration.
+the cUSDY market — runs beside it without migration.
 
 Prereqs: `delta_mint`, `governor`, `accrual_oracle`, and `mock_oracle` deployed
 on devnet (`anchor build && anchor deploy --provider.cluster devnet`). The

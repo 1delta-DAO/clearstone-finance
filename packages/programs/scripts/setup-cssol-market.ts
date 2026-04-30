@@ -4,9 +4,9 @@
  * Stands up a fresh klend lending market with the csSOL/wSOL reserve pair and
  * registers elevation group 2 (LST/SOL).
  *
- * Why a fresh market: the existing devnet dUSDY/USDC market predates the
+ * Why a fresh market: the existing devnet cUSDY/USDC market predates the
  * elevation-group config and the new accrual-oracle wiring. Decoupling avoids
- * any migration of the live dUSDY position; the dUSDY market keeps working
+ * any migration of the live cUSDY position; the cUSDY market keeps working
  * unchanged.
  *
  * What this script DOES:
@@ -27,7 +27,7 @@
  *     deploy-cssol-governor-devnet.ts first; it follows the same pattern as
  *     deploy-governor-devnet.ts, just with PoolParams.elevationGroup = 2 and
  *     underlying_mint = wSOL).
- *   - Touch the existing dUSDY market.
+ *   - Touch the existing cUSDY market.
  *
  * Usage:
  *   DEPLOY_KEYPAIR=~/.config/solana/id.json npx ts-node scripts/setup-cssol-market.ts

@@ -6,14 +6,14 @@
  *   1. Market-level: register elevation group {id=1, debt_reserve=sUSDC,
  *      ltv=90, liq_threshold=92, max_reserves_as_collateral=1, bonus=100bps}
  *      via `update_lending_market(UpdateElevationGroup, ...)`.
- *   2. Reserve-level: enroll the deUSX reserve into group 1 by setting
+ *   2. Reserve-level: enroll the ceUSX reserve into group 1 by setting
  *      its `config.elevation_groups[0] = 1` via
  *      `update_reserve_config(UpdateElevationGroups, …)`. The 20-byte
  *      array lists every group id this reserve can be pledged in; we
  *      keep it sparse with only group 1 set for now.
  *
  * After this script:
- *   - Group 1 = stables (deUSX collateral, sUSDC debt, 90% LTV)
+ *   - Group 1 = stables (ceUSX collateral, sUSDC debt, 90% LTV)
  *   - Group 2 = LST/SOL (csSOL+csSOL-WT collateral, wSOL debt, 90% LTV)
  *
  * Both live on the same market so a single obligation can switch eMode
@@ -25,7 +25,7 @@
  *   Step 2 currently fails: every `update_reserve_config` call on the
  *   csSOL market returns InvalidConfig (6004) at
  *   handler_update_reserve_config.rs:49 once group 1 is registered —
- *   for *every* reserve in the market (csSOL, wSOL, csSOL-WT, deUSX,
+ *   for *every* reserve in the market (csSOL, wSOL, csSOL-WT, ceUSX,
  *   sUSDC). The deployed klend binary no longer honors the
  *   `skipConfigIntegrityValidation` flag from the IDL: the
  *   `"WARNING! Skipping validation of the config"` log path was
@@ -47,7 +47,7 @@
  *        handler_update_reserve_config.rs to identify the exact
  *        invariant. With the source you can either pre-emptively
  *        satisfy it or open a PR to klend.
- *     b) Or recreate the deUSX/sUSDC reserves from scratch with full
+ *     b) Or recreate the ceUSX/sUSDC reserves from scratch with full
  *        bonus fields set at init-time, before registering group 1.
  *        Note: each reserve costs ~0.06 SOL in rent and lives forever
  *        in klend storage.
@@ -134,7 +134,7 @@ async function main() {
   console.log(`  Market:       ${MARKET.toBase58()}`);
   console.log(`  Group:        ${STABLES_GROUP_ID} (stables)`);
   console.log(`  Debt:         sUSDC ${SUSDC_RESERVE.toBase58()}`);
-  console.log(`  Collateral:   deUSX ${DEUSX_RESERVE.toBase58()}`);
+  console.log(`  Collateral:   ceUSX ${DEUSX_RESERVE.toBase58()}`);
   console.log("");
 
   // Step 1: PREP — temporarily de-fang elevation group 1.
@@ -170,7 +170,7 @@ async function main() {
     [auth]);
   console.log("  ✓ Group 1 temp-pointed at wSOL (allow_new_loans=0)");
 
-  // Step 1.5: backfill liquidation-bonus fields on deUSX/sUSDC. The
+  // Step 1.5: backfill liquidation-bonus fields on ceUSX/sUSDC. The
   // migration script never touched these (init_reserve default 0/0/0).
   // After registering an elevation group, klend's reserve_config_check
   // walks every market reserve and asserts (presumably)
@@ -195,7 +195,7 @@ async function main() {
       console.log(`  ✓ ${label} ${hint}`);
     }
   }
-  await backfillBonuses(DEUSX_RESERVE, "deUSX");
+  await backfillBonuses(DEUSX_RESERVE, "ceUSX");
   await backfillBonuses(SUSDC_RESERVE, "sUSDC");
 
   // Step 1b: now that sUSDC has valid bonuses, re-register group 1
@@ -215,14 +215,14 @@ async function main() {
     [auth]);
   console.log("  ✓ Group 1 active (ltv=90 / liq=92 / bonus=100bps / max_reserves=1)");
 
-  // Step 2a: set deUSX `disable_usage_as_collateral_outside_emode = 1`.
+  // Step 2a: set ceUSX `disable_usage_as_collateral_outside_emode = 1`.
   // Klend's reserve_config_check requires this when the reserve is
   // enrolled in a group with `max_reserves_as_collateral = 1` —
   // otherwise the post-update validation fails with InvalidConfig
   // (the reserve would otherwise be usable as collateral both inside
   // and outside eMode, which conflicts with the single-collateral
   // group semantics).
-  console.log("\n=== Step 2a: deUSX disable_usage_as_collateral_outside_emode = 1 ===");
+  console.log("\n=== Step 2a: ceUSX disable_usage_as_collateral_outside_emode = 1 ===");
   await sendAndConfirmTransaction(conn, new Transaction()
     .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }))
     .add(buildUpdateReserveConfigIx(
@@ -230,13 +230,13 @@ async function main() {
       CONFIG_MODE.UpdateDisableUsageAsCollateralOutsideEmode, Buffer.from([1]), true,
     )),
     [auth]);
-  console.log("  ✓ deUSX.config.disable_usage_as_collateral_outside_emode = 1");
+  console.log("  ✓ ceUSX.config.disable_usage_as_collateral_outside_emode = 1");
 
-  // Step 2b: enroll deUSX as eligible collateral in group 1.
+  // Step 2b: enroll ceUSX as eligible collateral in group 1.
   // The reserve carries an `elevation_groups: [u8; 20]` array — first
   // empty slot gets the new id. We currently set just slot[0]=1 since
-  // deUSX is only used in the stables group.
-  console.log("\n=== Step 2b: Enroll deUSX into Group 1 ===");
+  // ceUSX is only used in the stables group.
+  console.log("\n=== Step 2b: Enroll ceUSX into Group 1 ===");
   const elevationGroupsBuf = Buffer.alloc(20); // zero-init
   elevationGroupsBuf[0] = STABLES_GROUP_ID;
   await sendAndConfirmTransaction(conn, new Transaction()
@@ -246,13 +246,13 @@ async function main() {
       CONFIG_MODE.UpdateElevationGroups, elevationGroupsBuf, true,
     )),
     [auth]);
-  console.log(`  ✓ deUSX.config.elevation_groups = [${STABLES_GROUP_ID}, 0, …, 0]`);
+  console.log(`  ✓ ceUSX.config.elevation_groups = [${STABLES_GROUP_ID}, 0, …, 0]`);
 
   console.log("\n╔══════════════════════════════════════════════╗");
   console.log("║  Stables eMode ready                          ║");
   console.log("╚══════════════════════════════════════════════╝");
   console.log("  Next: in the playground, switch to group 1 from the");
-  console.log("  elevation-group dropdown after depositing deUSX.");
+  console.log("  elevation-group dropdown after depositing ceUSX.");
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

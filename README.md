@@ -4,7 +4,7 @@ Regulated lending pools built on permissionless infrastructure. Compliance at th
 
 ## What This Is
 
-A **KYC-wrapped USDY** token (dUSDY) that can be used as collateral in **Kamino Lend V2** permissionless markets — enabling institutional-grade, regulated lending without building custom lending infrastructure.
+A **KYC-wrapped USDY** token (cUSDY) that can be used as collateral in **Kamino Lend V2** permissionless markets — enabling institutional-grade, regulated lending without building custom lending infrastructure.
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
@@ -14,8 +14,8 @@ A **KYC-wrapped USDY** token (dUSDY) that can be used as collateral in **Kamino 
 │                                                               │
 │   1. Operator creates pool via governor (one tx)              │
 │   2. User passes KYC → authority whitelists wallet            │
-│   3. User receives dUSDY (1:1 wrapped USDY, Token-2022)      │
-│   4. User deposits dUSDY as collateral into Kamino market     │
+│   3. User receives cUSDY (1:1 wrapped USDY, Token-2022)      │
+│   4. User deposits cUSDY as collateral into Kamino market     │
 │   5. User borrows USDC against it (95% LTV)                  │
 │                                                               │
 │   Only KYC'd wallets can hold the token = only they can lend │
@@ -30,7 +30,7 @@ two productionized wrappers and an extensible governor that can mint more.
 
 ## Products built on this primitive
 
-### dUSDY — KYC-wrapped USDY for stablecoin lending
+### cUSDY — KYC-wrapped USDY for stablecoin lending
 
 The original product. KYC-gated wrapper around Ondo's USDY, deposited into
 a permissionless Kamino market (USDC borrow), in elevation group 1
@@ -128,7 +128,7 @@ packages/
 │   │   ├── governor.fork.ts          # Governor-orchestrated flow
 │   │   └── kamino-full-flow.fork.ts  # E2E: mint → deposit → borrow
 │   └── configs/
-│       ├── delta_usdy_reserve.json   # Kamino reserve config (dUSDY collateral)
+│       ├── delta_usdy_reserve.json   # Kamino reserve config (cUSDY collateral)
 │       └── usdc_borrow_reserve.json  # Kamino reserve config (USDC borrow)
 ├── frontend/                         # React + Vite (Solana wallet adapter)
 └── backend/                          # Fastify API server
@@ -169,11 +169,11 @@ Step 1: Create KYC-gated token
     borrow: USDC,     borrowOracle: Pyth_USDC,
     decimals: 6, ltv: 95, liquidation: 97
   })
-  → Creates dUSDY Token-2022 mint + PoolConfig PDA
+  → Creates cUSDY Token-2022 mint + PoolConfig PDA
 
 Step 2: Configure Kamino market (off-chain SDK)
   → initLendingMarket (quoteCurrency: USD)
-  → initReserve (dUSDY collateral, Token-2022)
+  → initReserve (cUSDY collateral, Token-2022)
   → initReserve (USDC borrow, SPL Token)
   → updateReserveConfig × N (LTV=95%, oracle, limits)
 
@@ -182,20 +182,20 @@ Step 3: governor.registerLendingMarket(market, reserves)
 
 Step 4: KYC + Deposit
   governor.addParticipant({ holder: {} })  → whitelist user
-  governor.mintWrapped(1000_000_000)       → 1000 dUSDY
-  klend.depositAndCollateral(500_000_000)  → 500 dUSDY collateral
+  governor.mintWrapped(1000_000_000)       → 1000 cUSDY
+  klend.depositAndCollateral(500_000_000)  → 500 cUSDY collateral
 
 Step 5: Borrow
-  klend.refreshReserve (dUSDY + USDC oracles)
+  klend.refreshReserve (cUSDY + USDC oracles)
   klend.refreshObligation
   klend.borrowObligationLiquidity(400_000_000)  → 400 USDC borrowed
 
-Result: 500 dUSDY collateral → 400 USDC borrowed (80% of 95% LTV)
+Result: 500 cUSDY collateral → 400 USDC borrowed (80% of 95% LTV)
 ```
 
 ## Reserve Configurations
 
-**dUSDY Collateral** ([delta_usdy_reserve.json](packages/programs/configs/delta_usdy_reserve.json)):
+**cUSDY Collateral** ([delta_usdy_reserve.json](packages/programs/configs/delta_usdy_reserve.json)):
 | Parameter | Value | Rationale |
 |---|---|---|
 | LTV | 95% (configurable) | High LTV for stablecoin-backed collateral |
@@ -253,7 +253,7 @@ Result: 500 dUSDY collateral → 400 USDC borrowed (80% of 95% LTV)
 
 ## Privacy
 
-The dUSDY mint uses **Token-2022 ConfidentialTransferMint** extension:
+The cUSDY mint uses **Token-2022 ConfidentialTransferMint** extension:
 - ElGamal-encrypted balances — on-chain observers can't see amounts
 - Auto-approve enabled — holders configure confidential transfers immediately
 - Auditor key slot available for compliance
@@ -263,42 +263,42 @@ The dUSDY mint uses **Token-2022 ConfidentialTransferMint** extension:
 
 | Path | Mechanism |
 |---|---|
-| **Primary** | Pre-approved liquidator bots (`add_liquidator`) — vetted operators that can receive dUSDY collateral |
+| **Primary** | Pre-approved liquidator bots (`add_liquidator`) — vetted operators that can receive cUSDY collateral |
 | **Backstop** | Kamino auto-deleverage (`autodeleverageEnabled: 1`) — 7-day margin call, no third-party collateral transfer |
 | **Future** | Token-2022 transfer hook for permissionless KYC-gated liquidation |
 
-Liquidator role: can receive dUSDY during liquidations, **cannot mint** new tokens.
+Liquidator role: can receive cUSDY during liquidations, **cannot mint** new tokens.
 
 ## Test Coverage
 
 ```
   kamino-full-flow (mainnet fork)          ← E2E proof of concept
-    ✔ creates dUSDY mint, whitelists operator, mints 1000 dUSDY
-    ✔ creates klend market with dUSDY + USDC reserves
-    ✔ configures dUSDY reserve: 95% LTV, Pyth oracle, deposit limit
+    ✔ creates cUSDY mint, whitelists operator, mints 1000 cUSDY
+    ✔ creates klend market with cUSDY + USDC reserves
+    ✔ configures cUSDY reserve: 95% LTV, Pyth oracle, deposit limit
     ✔ configures USDC reserve: oracle, borrow limit
-    ✔ creates user obligation and deposits 500 dUSDY collateral
-    ✔ borrows 400 USDC against dUSDY collateral
+    ✔ creates user obligation and deposits 500 cUSDY collateral
+    ✔ borrows 400 USDC against cUSDY collateral
     ✔ verifies the complete KYC-gated lending position
 
   governor-pool-creation (mainnet fork)    ← Governor orchestration
     ✔ initializes a KYC-gated lending pool via governor
     ✔ whitelists the operator as a Holder via governor
-    ✔ mints 100 dUSDY to operator via governor
+    ✔ mints 100 cUSDY to operator via governor
     ✔ whitelists a liquidator bot via governor
     ✔ rejects minting to a liquidator via governor
 
   kamino-market-creation (mainnet fork)    ← Market + reserve setup
-    ✔ creates dUSDY Token-2022 mint with confidential transfer extension
+    ✔ creates cUSDY Token-2022 mint with confidential transfer extension
     ✔ whitelists the market operator
-    ✔ mints 100 dUSDY to the operator for reserve seeding
+    ✔ mints 100 cUSDY to the operator for reserve seeding
     ✔ whitelists a liquidator bot via add_liquidator
     ✔ rejects minting to a liquidator-role wallet
     ✔ creates a new Kamino Lend V2 lending market
-    ✔ initializes dUSDY collateral reserve
+    ✔ initializes cUSDY collateral reserve
     ✔ initializes USDC borrow reserve
     ✔ verifies klend PDA derivations and instruction layout
-    ✔ validates dUSDY collateral config from JSON
+    ✔ validates cUSDY collateral config from JSON
     ✔ validates USDC borrow config from JSON
 
   delta-mint (unit)
@@ -397,7 +397,7 @@ of the bounty's judging criteria to the architecture above:
 | Depth of Jito integration | Three central Jito products (Vault, Bundles, ShredStream-shaped monitor), each enforcing a meaningful piece of architecture rather than decoration. |
 | Technical execution | All on-chain primitives deployed on devnet; gating verified end-to-end; programs compile clean and have backwards-compatible reallocation paths for v3 → v4 migrations. |
 | Originality | KYC-gated re-staked LST as Kamino elevation-group collateral with on-chain-derived accrual is a novel composition — Aave-Horizon-style compliance applied across Jito's restaking primitives. |
-| Impact potential | Same wrapper primitive scales to other regulated underlyings (dUSDY already shipped; csSOL is the second instance). The gated Jito Vault pattern is reusable for any compliance-bound protocol that wants to consume Jito's stack. |
+| Impact potential | Same wrapper primitive scales to other regulated underlyings (cUSDY already shipped; csSOL is the second instance). The gated Jito Vault pattern is reusable for any compliance-bound protocol that wants to consume Jito's stack. |
 | Demo quality | Every step has a `tx`, `signature`, or UUID anchored on devnet (or on Jito's actual block engine for the Bundle leg). All commands documented above. |
 
 ## Further Reading

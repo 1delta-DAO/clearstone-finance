@@ -31,7 +31,7 @@
   },
 
   "tokenInfo": {
-    "name": "dUSDY",
+    "name": "cUSDY",
     "heuristic": { "exp": "0", "lower": "0", "upper": "0" },
     "maxTwapDivergenceBps": "4050",
     "maxAgePriceSeconds": "120",

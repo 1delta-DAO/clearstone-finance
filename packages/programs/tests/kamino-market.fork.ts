@@ -2,9 +2,9 @@
  * Kamino Market Creation — Fork Integration Test
  *
  * Simulates the full flow of creating a KYC-gated lending market on Kamino Lend V2:
- *   1. Create dUSDY (KYC-wrapped USDY) via delta-mint program
+ *   1. Create cUSDY (KYC-wrapped USDY) via delta-mint program
  *   2. Create a new Kamino Lend V2 lending market
- *   3. Initialize dUSDY collateral reserve (uses USDY Pyth oracle)
+ *   3. Initialize cUSDY collateral reserve (uses USDY Pyth oracle)
  *   4. Initialize USDC borrow reserve
  *   5. Verify market structure and reserve accounts
  *   6. Validate reserve configs against JSON definitions
@@ -366,10 +366,10 @@ describe("kamino-market-creation (mainnet fork)", () => {
   });
 
   // =========================================================================
-  // Phase 1 — Create KYC-gated dUSDY token
+  // Phase 1 — Create KYC-gated cUSDY token
   // =========================================================================
 
-  it("creates dUSDY Token-2022 mint with confidential transfer extension", async () => {
+  it("creates cUSDY Token-2022 mint with confidential transfer extension", async () => {
     await program.methods
       .initializeMint(6)
       .accounts({
@@ -405,7 +405,7 @@ describe("kamino-market-creation (mainnet fork)", () => {
     expect(entry.approved).to.be.true;
   });
 
-  it("mints 100 dUSDY to the operator for reserve seeding", async () => {
+  it("mints 100 cUSDY to the operator for reserve seeding", async () => {
     const operatorAta = getAssociatedTokenAddressSync(
       dUsdyMintKeypair.publicKey,
       provider.wallet.publicKey,
@@ -423,7 +423,7 @@ describe("kamino-market-creation (mainnet fork)", () => {
       ASSOCIATED_TOKEN_PROGRAM_ID
     );
 
-    const amount = new BN(100_000_000); // 100 dUSDY (6 decimals)
+    const amount = new BN(100_000_000); // 100 cUSDY (6 decimals)
 
     await program.methods
       .mintTo(amount)
@@ -587,7 +587,7 @@ describe("kamino-market-creation (mainnet fork)", () => {
     })();
   });
 
-  it("initializes dUSDY collateral reserve on the new market", function () {
+  it("initializes cUSDY collateral reserve on the new market", function () {
     if (!mainnetAvailable) return this.skip();
     if (!klendExecutionWorks) {
       console.log("    [SKIPPED] klend execution unavailable — verifying instruction structure only");
@@ -640,7 +640,7 @@ describe("kamino-market-creation (mainnet fork)", () => {
       );
 
       console.log(
-        `    dUSDY reserve:  ${dUsdyReserveKeypair.publicKey.toBase58()}`
+        `    cUSDY reserve:  ${dUsdyReserveKeypair.publicKey.toBase58()}`
       );
     })();
   });
@@ -762,7 +762,7 @@ describe("kamino-market-creation (mainnet fork)", () => {
       console.log(`    Mainnet market:  ${KAMINO_MAIN_MARKET.toBase58()} (LendingMarket discriminator OK)`);
       console.log(`    New market:      ${marketKeypair.publicKey.toBase58()}`);
       console.log(`    Market auth PDA: ${marketAuth.toBase58()}`);
-      console.log(`    dUSDY reserve:   ${dUsdyReserveKeypair.publicKey.toBase58()}`);
+      console.log(`    cUSDY reserve:   ${dUsdyReserveKeypair.publicKey.toBase58()}`);
       console.log(`      liqSupply:     ${dusdyPdas.liqSupply.toBase58()}`);
       console.log(`      feeVault:      ${dusdyPdas.feeVault.toBase58()}`);
       console.log(`      collMint:      ${dusdyPdas.collMint.toBase58()}`);
@@ -772,7 +772,7 @@ describe("kamino-market-creation (mainnet fork)", () => {
       console.log(`      feeVault:      ${usdcPdas.feeVault.toBase58()}`);
       console.log(`      collMint:      ${usdcPdas.collMint.toBase58()}`);
       console.log(`      collSupply:    ${usdcPdas.collSupply.toBase58()}`);
-      console.log(`    dUSDY mint:      ${dUsdyMintKeypair.publicKey.toBase58()} (Token-2022 + CT)`);
+      console.log(`    cUSDY mint:      ${dUsdyMintKeypair.publicKey.toBase58()} (Token-2022 + CT)`);
     })();
   });
 
@@ -780,23 +780,23 @@ describe("kamino-market-creation (mainnet fork)", () => {
   // Phase 6 — Validate reserve configs against JSON definitions
   // =========================================================================
 
-  it("validates dUSDY collateral config from JSON", async () => {
+  it("validates cUSDY collateral config from JSON", async () => {
     const config = require("../configs/delta_usdy_reserve.json");
 
-    // dUSDY is collateral-only: LTV > 0, borrowLimit = 0
+    // cUSDY is collateral-only: LTV > 0, borrowLimit = 0
     expect(config.loanToValuePct).to.equal(75);
     expect(config.liquidationThresholdPct).to.equal(82);
     expect(config.borrowLimit).to.equal("0");
-    expect(config.tokenInfo.name).to.equal("dUSDY");
+    expect(config.tokenInfo.name).to.equal("cUSDY");
     expect(config.tokenInfo.pythConfiguration.price).to.equal(
       PYTH_USDY_PRICE.toBase58()
     );
 
-    console.log("\n    === dUSDY Reserve Config ===");
+    console.log("\n    === cUSDY Reserve Config ===");
     console.log(`    LTV:                 ${config.loanToValuePct}%`);
     console.log(`    Liquidation:         ${config.liquidationThresholdPct}%`);
     console.log(
-      `    Deposit limit:       ${(Number(config.depositLimit) / 1e6).toLocaleString()} dUSDY`
+      `    Deposit limit:       ${(Number(config.depositLimit) / 1e6).toLocaleString()} cUSDY`
     );
     console.log(
       `    Liq bonus range:     ${config.minLiquidationBonusBps}–${config.maxLiquidationBonusBps} bps`
@@ -850,7 +850,7 @@ describe("kamino-market-creation (mainnet fork)", () => {
     console.log("\n    ============================================");
     console.log("    === Steps to Go Live ===");
     console.log("    ============================================");
-    console.log("    1. updateReserveConfig for dUSDY reserve:");
+    console.log("    1. updateReserveConfig for cUSDY reserve:");
     console.log("       - Set Pyth oracle (BkN8...)");
     console.log("       - Set LTV=75%, liquidation=82%");
     console.log("       - Set deposit limit, withdrawal caps");
@@ -860,13 +860,13 @@ describe("kamino-market-creation (mainnet fork)", () => {
     console.log("       - Set borrow limit, interest rate curve");
     console.log("       - Apply configs/usdc_borrow_reserve.json");
     console.log("    3. Confidential transfers:");
-    console.log("       - dUSDY mint has CT extension enabled");
+    console.log("       - cUSDY mint has CT extension enabled");
     console.log("       - Standard balances used by klend (compatible)");
     console.log("       - Users opt-in to CT on their token accounts");
     console.log("    4. Liquidations (whitelisted approach):");
     console.log("       - Fast path: pre-approved liquidator bots (add_liquidator)");
     console.log("       - Backstop: Kamino auto-deleverage (72hr margin call)");
-    console.log("       - Liquidator role: can receive dUSDY, cannot mint");
+    console.log("       - Liquidator role: can receive cUSDY, cannot mint");
     console.log("       - Min/max bonus: 200–500 bps (per config)");
     console.log("       - Future: transfer hook for permissionless KYC'd liq");
     console.log("    5. KYC gating:");

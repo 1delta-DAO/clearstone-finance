@@ -103,11 +103,11 @@ export default function LendingPanel() {
     return () => { cancelled = true; };
   }, [publicKey, connected, connection, config, getObligationPda]);
 
-  // --- Deposit dUSDY as collateral ---
+  // --- Deposit cUSDY as collateral ---
   const handleDeposit = useCallback(async () => {
     if (!publicKey || !depositAmt || Number(depositAmt) <= 0) return;
     setLoading(true);
-    showStatus("Depositing dUSDY collateral...");
+    showStatus("Depositing cUSDY collateral...");
 
     try {
       const market = config.market.lendingMarket;
@@ -193,7 +193,7 @@ export default function LendingPanel() {
 
       const sig = await sendTransaction(tx, connection);
       await connection.confirmTransaction(sig, "confirmed");
-      showStatus(`Deposited ${depositAmt} dUSDY! Tx: ${sig.slice(0, 20)}...`, "ok");
+      showStatus(`Deposited ${depositAmt} cUSDY! Tx: ${sig.slice(0, 20)}...`, "ok");
       setDepositAmt("");
       setObligationAddr(obPda.toBase58());
     } catch (e: any) {
@@ -279,6 +279,13 @@ export default function LendingPanel() {
 
   return (
     <div className="flex flex-col gap-6">
+      <div>
+        <span className="eyebrow">Operator</span>
+        <h2 className="text-2xl mt-1">Lending</h2>
+        <p className="text-sm text-base-content/55 mt-1">
+          Inspect obligations, supply, and borrow against curated reserves.
+        </p>
+      </div>
       {status && (
         <div className={`alert font-mono text-sm break-all ${status.type === "ok" ? "alert-success" : status.type === "err" ? "alert-error" : "alert-info"}`}>
           {status.msg}
@@ -287,7 +294,7 @@ export default function LendingPanel() {
 
       <Card title="Your Position">
         <div className="grid grid-cols-4 gap-4 text-center">
-          <StatBox label="dUSDY Balance" value={dUsdyBalance ?? "..."} unit="dUSDY" />
+          <StatBox label="cUSDY Balance" value={dUsdyBalance ?? "..."} unit="cUSDY" />
           <StatBox label="USDC Balance" value={usdcBalance ?? "..."} unit="USDC" />
           <StatBox label="KYC Status" value={isWhitelisted ? "Approved" : "Not KYC'd"} colorClass={isWhitelisted ? "text-success" : "text-error"} />
           <StatBox label="Obligation" value={obligationAddr ? "Active" : "None"} colorClass={obligationAddr ? "text-success" : "opacity-40"} />
@@ -301,20 +308,20 @@ export default function LendingPanel() {
       )}
 
       <div className="grid grid-cols-2 gap-4">
-        <Card title="Deposit dUSDY Collateral">
+        <Card title="Deposit cUSDY Collateral">
           <p className="text-sm opacity-50 mb-3">
-            Deposit dUSDY as collateral to borrow USDC. Creates an obligation if needed.
+            Deposit cUSDY as collateral to borrow USDC. Creates an obligation if needed.
           </p>
           <div className="flex gap-3">
             <input placeholder="Amount" value={depositAmt} onChange={(e) => setDepositAmt(e.target.value)} className="input input-bordered bg-base-200 text-base-content flex-1 font-mono" inputMode="decimal" pattern="[0-9.]*" />
             <ActionButton label={loading ? "..." : "Deposit"} variant="success" onClick={handleDeposit} disabled={loading} />
           </div>
-          <MaxButton label={`Wallet: ${dUsdyBalance ?? "—"} dUSDY`} onClick={() => setDepositAmt(dUsdyBalance || "")} />
+          <MaxButton label={`Wallet: ${dUsdyBalance ?? "—"} cUSDY`} onClick={() => setDepositAmt(dUsdyBalance || "")} />
         </Card>
 
         <Card title="Borrow USDC">
           <p className="text-sm opacity-50 mb-3">
-            Borrow USDC against your dUSDY collateral (75% LTV).
+            Borrow USDC against your cUSDY collateral (75% LTV).
           </p>
           <div className="flex gap-3">
             <input placeholder="Amount" value={borrowAmt} onChange={(e) => setBorrowAmt(e.target.value)} className="input input-bordered bg-base-200 text-base-content flex-1 font-mono" inputMode="decimal" pattern="[0-9.]*" />
@@ -357,9 +364,9 @@ export default function LendingPanel() {
       <Card title="Market Info">
         <div className="grid grid-cols-2 gap-1 text-xs opacity-50">
           <span>Market:</span><Addr value={config.market.lendingMarket.toBase58()} />
-          <span>dUSDY Reserve:</span><Addr value={config.market.dUsdyReserve.toBase58()} />
+          <span>cUSDY Reserve:</span><Addr value={config.market.dUsdyReserve.toBase58()} />
           <span>USDC Reserve:</span><Addr value={config.market.usdcReserve.toBase58()} />
-          <span>dUSDY Oracle:</span><Addr value={config.oracles.dUsdyOracle.toBase58()} />
+          <span>cUSDY Oracle:</span><Addr value={config.oracles.dUsdyOracle.toBase58()} />
           <span>USDC Oracle:</span><Addr value={config.oracles.usdcOracle.toBase58()} />
           {obligationAddr && <><span>Obligation:</span><Addr value={obligationAddr} /></>}
         </div>
@@ -370,7 +377,7 @@ export default function LendingPanel() {
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="card bg-base-200 border border-base-300 shadow-sm">
+    <div className="panel">
       <div className="card-body p-6 gap-4">
         <h3 className="card-title text-base">{title}</h3>
         {children}

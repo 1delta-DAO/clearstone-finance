@@ -161,8 +161,8 @@ Required before creating an obligation.
 | klend program | `KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD` |
 | Global config | `BEe6HXZf6cByeb8iCxukjB8k74kJN3cVbBAGi49Hfi6W` |
 | Lending market | `45FNL648aXgbMoMzLfYE2vCZAtWWDCky2tYLCEUztc98` |
-| dUSDY reserve | `HoEa26bHi96mwAu3joQZKcyxhG9jXyJvaxLNuvjcwZmw` |
+| cUSDY reserve | `HoEa26bHi96mwAu3joQZKcyxhG9jXyJvaxLNuvjcwZmw` |
 | USDC reserve | `7fYbqqcWnUvz3ffH6knnRRoRhDYaK4MgHH8Cj1Uwii4j` |
-| dUSDY oracle (PriceUpdateV2) | `EZxvCYEjyogA2R1Eppz1AWyxhgjZWs4nXQRk3RC2yRLt` |
+| cUSDY oracle (PriceUpdateV2) | `EZxvCYEjyogA2R1Eppz1AWyxhgjZWs4nXQRk3RC2yRLt` |
 | USDC oracle (PriceUpdateV2) | `CRhtYFcS32PBbRBrP31JafW15DpPpydZPKMnbkyuiD7W` |
 | TradeDesk Oracle program | `7qABPpPwvS7u7Y5vgDKZdSqLnc6N9FasVnG2iv7qe4vm` |

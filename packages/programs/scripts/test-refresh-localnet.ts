@@ -16,7 +16,7 @@ async function main() {
   const disc = crypto.createHash("sha256").update("global:refresh_reserve").digest().subarray(0, 8);
 
   for (const [name, addr] of [
-    ["dUSDY", "HoEa26bHi96mwAu3joQZKcyxhG9jXyJvaxLNuvjcwZmw"],
+    ["cUSDY", "HoEa26bHi96mwAu3joQZKcyxhG9jXyJvaxLNuvjcwZmw"],
     ["USDC", "D4qXufDqBjU5iTbVMHfdxDrpYnz31sed1oQCJbWoVGmH"],
   ] as const) {
     const reserve = new PublicKey(addr);

@@ -110,7 +110,7 @@ export default function MarketPanel() {
     const loadReserves = async () => {
       const results: ReserveStatus[] = [];
       const knownReserves = [
-        ["deUSX", "3FkBgVfnYBnUre6GMQZv8w4dDM1x7Fp5RiGk96kZ5mVs"],
+        ["ceUSX", "3FkBgVfnYBnUre6GMQZv8w4dDM1x7Fp5RiGk96kZ5mVs"],
         ["dtUSDY", "HhTUuM5XwpnQchiUiLVNxUjPkHtfbcX4aF4bWKCSSAuT"],
         ["sUSDC", "AYhwFLgzxWwqznhxv6Bg1NVnNeoDNu9SBGLzM1W3hSfb"],
       ];
@@ -374,9 +374,13 @@ export default function MarketPanel() {
 
   return (
     <div className="flex flex-col gap-6">
-      <p className="opacity-50 text-sm">
-        Create and configure klend reserves for wrapped tokens. Requires market admin authority.
-      </p>
+      <div>
+        <span className="eyebrow">Operator</span>
+        <h2 className="text-2xl mt-1">Lending market</h2>
+        <p className="text-sm text-base-content/55 mt-1">
+          Create and configure klend reserves for wrapped tokens. Requires market admin authority.
+        </p>
+      </div>
 
       {status && (
         <div className={`alert text-sm break-all ${status.type === "ok" ? "alert-success" : status.type === "err" ? "alert-error" : "alert-info"}`}>

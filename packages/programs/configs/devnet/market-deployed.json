@@ -2,7 +2,7 @@
   "cluster": "devnet",
   "market": "45FNL648aXgbMoMzLfYE2vCZAtWWDCky2tYLCEUztc98",
   "reserves": {
-    "dUSDY": {
+    "cUSDY": {
       "status": "created",
       "address": "HoEa26bHi96mwAu3joQZKcyxhG9jXyJvaxLNuvjcwZmw",
       "mint": "ALqRkS5GdVYWUFLzsL3xbKCxkoMxe2p23UUP9Waddwfx",

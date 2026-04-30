@@ -1,7 +1,7 @@
 /**
  * setup-devnet-market.ts
  *
- * Creates a Kamino lending market with dUSDY collateral and USDC borrow
+ * Creates a Kamino lending market with cUSDY collateral and USDC borrow
  * reserves on Solana devnet. Then registers the market with the governor.
  *
  * Prerequisites:
@@ -322,7 +322,7 @@ async function main() {
   const usdcReserveKp = Keypair.generate();
 
   console.log(`\n  Market:         ${marketKp.publicKey.toBase58()}`);
-  console.log(`  dUSDY reserve:  ${dUsdyReserveKp.publicKey.toBase58()}`);
+  console.log(`  cUSDY reserve:  ${dUsdyReserveKp.publicKey.toBase58()}`);
   console.log(`  USDC reserve:   ${usdcReserveKp.publicKey.toBase58()}`);
   console.log(`  USDC mint:      ${DEVNET_USDC_MINT.toBase58()} (verified devnet)`);
 
@@ -410,11 +410,11 @@ async function main() {
     console.error(`  USDC reserve failed: ${e.message}`);
   }
 
-  // dUSDY reserve (Token-2022)
-  // Note: dUSDY mint exists but we haven't minted any tokens yet (requires whitelist flow).
-  // We skip dUSDY reserve init for now — it will be added after governor whitelisting.
-  console.log("\n  NOTE: Skipping dUSDY reserve — requires minting dUSDY via governor whitelist flow.");
-  console.log("  Run add_participant + mint_wrapped first, then init dUSDY reserve separately.");
+  // cUSDY reserve (Token-2022)
+  // Note: cUSDY mint exists but we haven't minted any tokens yet (requires whitelist flow).
+  // We skip cUSDY reserve init for now — it will be added after governor whitelisting.
+  console.log("\n  NOTE: Skipping cUSDY reserve — requires minting cUSDY via governor whitelist flow.");
+  console.log("  Run add_participant + mint_wrapped first, then init cUSDY reserve separately.");
 
   // ---------------------------------------------------------------------------
   // Step 3: Configure reserves
@@ -482,7 +482,7 @@ async function main() {
     cluster: "devnet",
     market: marketKp.publicKey.toBase58(),
     reserves: {
-      dUSDY: {
+      cUSDY: {
         status: "pending — needs mint_wrapped via governor first",
         reserveKeypair: dUsdyReserveKp.publicKey.toBase58(),
         mint: wrappedMint.toBase58(),
