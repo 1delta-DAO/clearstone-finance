@@ -172,7 +172,18 @@ export interface ReserveView {
   borrowedAmountSf: bigint;     // raw, Q64.60
   totalLiquiditySf: bigint;     // available + borrowed, in raw units (Q64.60)
   cTokenMintTotalSupply: bigint;
+  ltvPct: number;               // standalone (outside-eMode) LTV cap, 0–100
+  liqThresholdPct: number;      // standalone liquidation threshold, 0–100
 }
+
+// ReserveConfig.loan_to_value_pct + liquidation_threshold_pct sit inside
+// the reserve account at fixed bytes once you skip header + liquidity +
+// padding + collateral + padding. Verified empirically against the v1
+// csSOL reserve (ltv=55 at offset 4872, liq=65 at offset 4873). Storing
+// the pair here so we don't need to import the full klend SDK in the
+// frontend just to surface two u8 fields.
+const RESERVE_CONFIG_LTV_OFFSET = 4872;
+const RESERVE_CONFIG_LIQ_THRESHOLD_OFFSET = 4873;
 
 /**
  * PriceUpdateV2 layout (Pyth Solana Receiver / our accrual-oracle):
@@ -230,7 +241,13 @@ export async function readReserve(conn: Connection, reserve: PublicKey, oracle?:
   const cTokenMintTotalSupply = availableAmount;
   const totalLiquiditySf = (BigInt(availableAmount) << SF_SHIFT) + borrowedAmountSf;
 
-  return { liquidityMint, decimals, marketPriceSf, availableAmount, borrowedAmountSf, totalLiquiditySf, cTokenMintTotalSupply };
+  const ltvPct = d[RESERVE_CONFIG_LTV_OFFSET];
+  const liqThresholdPct = d[RESERVE_CONFIG_LIQ_THRESHOLD_OFFSET];
+
+  return {
+    liquidityMint, decimals, marketPriceSf, availableAmount, borrowedAmountSf,
+    totalLiquiditySf, cTokenMintTotalSupply, ltvPct, liqThresholdPct,
+  };
 }
 
 /**

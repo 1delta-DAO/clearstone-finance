@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import {
   ComputeBudgetProgram,
@@ -87,24 +87,30 @@ const KNOWN_MINTS: Record<string, { symbol: string; tokenProgram: PublicKey; ora
   [CSSOL_MINT.toBase58()]: { symbol: "csSOL", tokenProgram: TOKEN_2022_PROGRAM_ID, oracle: CSSOL_RESERVE_ORACLE },
   [NATIVE_MINT.toBase58()]: { symbol: "wSOL", tokenProgram: TOKEN_PROGRAM_ID, oracle: WSOL_RESERVE_ORACLE },
   ...(CSSOL_WT_MINT ? { [CSSOL_WT_MINT.toBase58()]: { symbol: "csSOL-WT", tokenProgram: TOKEN_2022_PROGRAM_ID, oracle: CSSOL_RESERVE_ORACLE } } : {}),
+  // Stables on the v2 unified csSOL market (see
+  // scripts/bootstrap-cssol-market-v2.ts). Oracles are mock-oracle
+  // PriceUpdateV2 accounts pinned to $1.08 (deUSX) and $1.00 (sUSDC).
+  "8Uy7rmtAZvnQA1SuYZJKKBXFovHDPEYXiYH3H6iQMRwT": { symbol: "deUSX", tokenProgram: TOKEN_2022_PROGRAM_ID, oracle: new PublicKey("CbZjUS1RjAVws1uAeNZVarPUy2e1daRnJwJcEnNqYD7V") },
+  "8iBux2LRja1PhVZph8Rw4Hi45pgkaufNEiaZma5nTD5g": { symbol: "sUSDC", tokenProgram: TOKEN_PROGRAM_ID, oracle: new PublicKey("D9P2AgwpnjVDCWG9DpkR9dxGSLNHASc93fj72DGheNP8") },
 };
+
+const ELEVATION_GROUP_STABLES = 1;
 
 const ELEVATION_GROUPS: { id: number; label: string }[] = [
   { id: 0, label: "0 — None (default)" },
+  { id: ELEVATION_GROUP_STABLES, label: `${ELEVATION_GROUP_STABLES} — Stables (90% LTV; deUSX collateral, sUSDC debt)` },
   { id: ELEVATION_GROUP_LST_SOL, label: `${ELEVATION_GROUP_LST_SOL} — LST/SOL (90% LTV; csSOL+csSOL-WT collateral, wSOL debt)` },
 ];
 
-// Markets we can browse from this tab. The csSOL market is the
-// "active" one (action buttons routed there); the eUSX market is
-// included so we can inspect its reserves while it lives separately.
-// TODO(unify): migrate the eUSX market reserves into the csSOL market
-// so we have one cross-margin klend instance — institutions can post
-// deUSX as collateral against wSOL debt (or vice versa) without
-// fragmenting liquidity across two obligations. This is a klend
-// `init_reserve` script run, not a code change here.
+// Markets we can browse from this tab. v2 (KLEND_MARKET, the active one)
+// is the unified market built by scripts/bootstrap-cssol-market-v2.ts —
+// all five reserves and both elevation groups configured cleanly. v1
+// (`2gRy7f…heyejW`) and the standalone eUSX market are kept read-only
+// so any pre-migration test state can be inspected during wind-down.
 const MARKETS: { pubkey: PublicKey; label: string; active: boolean }[] = [
-  { pubkey: KLEND_MARKET, label: "csSOL market (active — actions enabled)", active: true },
-  { pubkey: new PublicKey("45FNL648aXgbMoMzLfYE2vCZAtWWDCky2tYLCEUztc98"), label: "eUSX market (read-only — pending migration)", active: false },
+  { pubkey: KLEND_MARKET, label: "csSOL market v2 (active — unified, both eMode groups)", active: true },
+  { pubkey: new PublicKey("2gRy7fYaPe8ooB1HqTfa2sJeJZ8KdVebhj88tgShyejW"), label: "csSOL market v1 (read-only — config locked)", active: false },
+  { pubkey: new PublicKey("45FNL648aXgbMoMzLfYE2vCZAtWWDCky2tYLCEUztc98"), label: "eUSX market (read-only — superseded by v2)", active: false },
 ];
 
 export default function LendingPositionTab() {
@@ -125,6 +131,16 @@ export default function LendingPositionTab() {
   // Per-reserve action input state (amount strings keyed by reserve symbol+action).
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [wrapAmount, setWrapAmount] = useState<string>("0.05");
+
+  // Which row currently has its action panel expanded. Only one open at
+  // a time keeps the table compact — clicking a row's action button
+  // either opens its panel or, if the same action is already open,
+  // closes it.
+  type ActionKind = "deposit" | "withdraw" | "borrow" | "repay";
+  const [activePanel, setActivePanel] = useState<{ symbol: string; action: ActionKind } | null>(null);
+  const togglePanel = (symbol: string, action: ActionKind) =>
+    setActivePanel((cur) => (cur && cur.symbol === symbol && cur.action === action ? null : { symbol, action }));
+  const closePanel = () => setActivePanel(null);
 
   const refresh = async () => {
     if (!wallet.publicKey) return;
@@ -218,6 +234,33 @@ export default function LendingPositionTab() {
       return null;
     }
     return BigInt(Math.round(n * LAMPORTS_PER_SOL));
+  }
+
+  /** Best-effort error stringifier — `[object Object]` is what
+   *  `${e.message ?? e}` produces for structured errors with no
+   *  `.message` field (wallet rejections, web3.js
+   *  `SendTransactionError`, RPC error envelopes). Walk the common
+   *  shapes and concatenate everything we can find. */
+  function fmtErr(e: any, label?: string): string {
+    if (!e) return "(unknown error)";
+    const parts: string[] = [];
+    if (label) parts.push(`${label} failed:`);
+    if (typeof e === "string") parts.push(e);
+    if (e.message) parts.push(String(e.message));
+    if (e.transactionMessage && e.transactionMessage !== e.message) parts.push(String(e.transactionMessage));
+    if (e.signature) parts.push(`sig=${e.signature}`);
+    if (Array.isArray(e.transactionLogs)) parts.push(e.transactionLogs.slice(-12).join("\n"));
+    if (Array.isArray(e.logs)) parts.push(e.logs.slice(-12).join("\n"));
+    if (e.error) {
+      // Wallet adapter style: { error: { message, code } }
+      if (e.error.message) parts.push(`wallet: ${e.error.message}`);
+      else parts.push(`wallet: ${JSON.stringify(e.error)}`);
+    }
+    if (parts.length === (label ? 1 : 0)) {
+      // Nothing useful extracted — dump the whole thing.
+      try { parts.push(JSON.stringify(e, null, 2)); } catch { parts.push(String(e)); }
+    }
+    return parts.join("\n");
   }
 
   async function send(ixes: TransactionInstruction[], label: string) {
@@ -332,7 +375,7 @@ export default function LendingPositionTab() {
       ];
       await send(ixes, "wrap SOL → csSOL");
       await refresh();
-    } catch (e: any) { setError(`${e.message ?? e}`); } finally { setBusy(false); }
+    } catch (e: any) { setError(fmtErr(e)); } finally { setBusy(false); }
   }
 
   async function handleDeposit(meta: ReserveMeta) {
@@ -381,8 +424,9 @@ export default function LendingPositionTab() {
         ixes.push(createCloseAccountInstruction(userAta, owner, owner, [], TOKEN_PROGRAM_ID));
       }
       await send(ixes, `deposit ${meta.symbol}`);
+      closePanel();
       await refresh();
-    } catch (e: any) { setError(`${e.message ?? e}`); } finally { setBusy(false); }
+    } catch (e: any) { setError(fmtErr(e)); } finally { setBusy(false); }
   }
 
   async function handleBorrow(meta: ReserveMeta) {
@@ -410,8 +454,9 @@ export default function LendingPositionTab() {
         ixes.push(createCloseAccountInstruction(userAta, owner, owner, [], TOKEN_PROGRAM_ID));
       }
       await send(ixes, `borrow ${meta.symbol}`);
+      closePanel();
       await refresh();
-    } catch (e: any) { setError(`${e.message ?? e}`); } finally { setBusy(false); }
+    } catch (e: any) { setError(fmtErr(e)); } finally { setBusy(false); }
   }
 
   async function handleRepay(meta: ReserveMeta) {
@@ -444,8 +489,9 @@ export default function LendingPositionTab() {
         ixes.push(createCloseAccountInstruction(userAta, owner, owner, [], TOKEN_PROGRAM_ID));
       }
       await send(ixes, `repay ${meta.symbol}`);
+      closePanel();
       await refresh();
-    } catch (e: any) { setError(`${e.message ?? e}`); } finally { setBusy(false); }
+    } catch (e: any) { setError(fmtErr(e)); } finally { setBusy(false); }
   }
 
   async function handleWithdraw(meta: ReserveMeta) {
@@ -480,8 +526,9 @@ export default function LendingPositionTab() {
         ixes.push(createCloseAccountInstruction(userAta, owner, owner, [], TOKEN_PROGRAM_ID));
       }
       await send(ixes, `withdraw ${meta.symbol}`);
+      closePanel();
       await refresh();
-    } catch (e: any) { setError(`${e.message ?? e}`); } finally { setBusy(false); }
+    } catch (e: any) { setError(fmtErr(e)); } finally { setBusy(false); }
   }
 
   /** Switch the obligation's elevation group. Must refresh every
@@ -521,7 +568,7 @@ export default function LendingPositionTab() {
       ixes.push(await buildRequestElevationGroupIx(owner, targetElevationGroup, depositReserves, borrowReserves));
       await send(ixes, `set elevation group ${targetElevationGroup}`);
       await refresh();
-    } catch (e: any) { setError(`${e.message ?? e}`); } finally { setBusy(false); }
+    } catch (e: any) { setError(fmtErr(e)); } finally { setBusy(false); }
   }
 
   // ── UI ─────────────────────────────────────────────────────────────
@@ -553,9 +600,6 @@ export default function LendingPositionTab() {
         </p>
       </header>
 
-      {/* Errors at the top so they're never missed */}
-      {error ? <pre className="alert alert-error text-xs whitespace-pre-wrap">{error}</pre> : null}
-
       {/* Summary card */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Stat label="NAV" value={fmtUsd(metrics.nav)} hint="depositValue − borrowValue" />
@@ -570,12 +614,11 @@ export default function LendingPositionTab() {
         <div className="card-body p-4 space-y-2">
           <div className="font-bold">Market <span className="text-xs opacity-60 font-normal">(klend lending market)</span></div>
           <p className="text-xs opacity-70">
-            We currently run two separate klend markets — the csSOL/wSOL
-            LST market (default) and the eUSX collateral market. <strong>To-do:</strong>{" "}
-            migrate the eUSX reserves (deUSX collateral, Solstice USDC debt) into the
-            csSOL market so we have one cross-margin instance. Posting deUSX
-            against wSOL debt (or vice versa) in a single obligation lifts
-            capital efficiency and removes the dual-obligation UX.
+            The csSOL market is now unified — deUSX (collateral) and Solstice
+            USDC (debt) reserves were migrated in from the standalone eUSX
+            market, so a single obligation can hold csSOL/csSOL-WT/deUSX as
+            collateral against wSOL or sUSDC debt. The legacy eUSX market is
+            kept read-only for wind-down of any pre-migration positions.
           </p>
           <div className="flex items-center gap-2 flex-wrap">
             <select
@@ -608,11 +651,14 @@ export default function LendingPositionTab() {
         <div className="card-body p-4 space-y-2">
           <div className="font-bold">Elevation group <span className="text-xs opacity-60 font-normal">(klend eMode)</span></div>
           <p className="text-xs opacity-70">
-            Group <code>0</code> is the default market (per-reserve LTVs).
-            Group <code>{ELEVATION_GROUP_LST_SOL}</code> is the LST/SOL eMode (90% LTV; csSOL + csSOL-WT
-            as collateral, wSOL as debt). Switching is allowed only if the
-            current obligation's deposits/borrows satisfy the new group's
-            constraints.
+            Group <code>0</code> is the default market (per-reserve LTVs).{" "}
+            Group <code>{ELEVATION_GROUP_STABLES}</code> is the Stables eMode
+            (90% LTV / 92% liq; deUSX collateral, sUSDC debt).{" "}
+            Group <code>{ELEVATION_GROUP_LST_SOL}</code> is the LST/SOL eMode
+            (90% LTV / 92% liq; csSOL + csSOL-WT collateral, wSOL debt).
+            Switching is allowed only if the current obligation's deposits and
+            borrows satisfy the new group's constraints (one collateral asset
+            from the group, debt only in the group's debt reserve).
           </p>
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs opacity-70">current:</span>
@@ -662,96 +708,247 @@ export default function LendingPositionTab() {
       </div>
 
       {/* Balance sheet — deposits left, debts right */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* DEPOSITS */}
         <div className="card bg-base-200">
-          <div className="card-body p-4">
-            <div className="font-bold mb-2">Collateral (deposits)</div>
-            {positions.map((p) => {
-              const r = reserves.get(p.reserve.reserve.toBase58());
-              const price = r ? sfToNumber(r.marketPriceSf) : 0;
-              const underlying = p.depositCtokens
-                ? Number(cTokensToUnderlying(p.depositCtokens)) / LAMPORTS_PER_SOL
-                : 0;
-              return (
-                <div key={p.reserve.symbol} className="border-t border-base-300 first:border-t-0 py-3 space-y-2">
-                  <div className="flex items-baseline justify-between">
-                    <div>
-                      <span className="font-bold">{p.reserve.symbol}</span>
-                      {p.reserve.symbol === "wSOL" ? <span className="ml-1 badge badge-xs">auto-wrap/unwrap SOL</span> : null}
-                      <span className="ml-2 text-xs opacity-60">price {fmtUsd(price)}</span>
-                    </div>
-                    <div className="text-right">
-                      <div className="font-mono">{fmt(underlying, 6)}</div>
-                      <div className="text-xs opacity-60">{fmtUsd(p.depositValue ?? 0)}</div>
-                    </div>
-                  </div>
-                  <PositionActions
-                    inputs={inputs} setInputs={setInputs} symbol={p.reserve.symbol}
-                    busy={busy}
-                    unitLabel={p.reserve.symbol === "wSOL" ? "SOL" : p.reserve.symbol}
-                    onDeposit={() => void handleDeposit(p.reserve)}
-                    onWithdraw={() => void handleWithdraw(p.reserve)}
-                    onFlashUnwind={p.reserve.symbol === "csSOL" && CSSOL_WT_RESERVE
-                      ? () => setError("Flash-unwind lives on the dedicated unwind tab — switch to it and use the leveraged-unwind card.")
-                      : undefined}
-                  />
-                </div>
-              );
-            })}
+          <div className="card-body p-0">
+            <div className="px-4 pt-4 pb-2 flex items-baseline justify-between">
+              <span className="font-bold">Collateral (deposits)</span>
+              <span className="text-xs opacity-60">{positions.filter((p) => p.depositCtokens).length} active</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="table table-sm">
+                <thead className="text-xs opacity-60">
+                  <tr>
+                    <th>Asset</th>
+                    <th className="text-right">Price</th>
+                    <th className="text-right">LTV</th>
+                    <th className="text-right">Balance</th>
+                    <th className="text-right">Value</th>
+                    <th className="text-right pr-4">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {positions.map((p) => {
+                    const r = reserves.get(p.reserve.reserve.toBase58());
+                    const price = r ? sfToNumber(r.marketPriceSf) : 0;
+                    const underlying = p.depositCtokens
+                      ? Number(cTokensToUnderlying(p.depositCtokens)) / LAMPORTS_PER_SOL
+                      : 0;
+                    const ltv = r?.ltvPct ?? 0;
+                    const liq = r?.liqThresholdPct ?? 0;
+                    const isWsol = p.reserve.symbol === "wSOL";
+                    const unit = isWsol ? "SOL" : p.reserve.symbol;
+                    const dKey = `${p.reserve.symbol}:deposit`;
+                    const wKey = `${p.reserve.symbol}:withdraw`;
+                    const dOpen = activePanel?.symbol === p.reserve.symbol && activePanel.action === "deposit";
+                    const wOpen = activePanel?.symbol === p.reserve.symbol && activePanel.action === "withdraw";
+                    const hasDeposit = !!p.depositCtokens && p.depositCtokens > 0n;
+                    return (
+                      <Fragment key={p.reserve.symbol}>
+                        <tr className={hasDeposit ? "" : "opacity-60"}>
+                          <td>
+                            <div className="font-bold">{p.reserve.symbol}</div>
+                            {isWsol ? <div className="text-[10px] opacity-50">auto-wrap/unwrap SOL</div> : null}
+                          </td>
+                          <td className="text-right font-mono text-xs">{price > 0 ? fmtUsd(price) : "—"}</td>
+                          <td className="text-right font-mono text-xs" title={`liq threshold ${liq}%`}>
+                            {ltv > 0 ? `${ltv}%` : <span className="opacity-40">—</span>}
+                          </td>
+                          <td className="text-right font-mono text-xs">{hasDeposit ? fmt(underlying, 6) : <span className="opacity-40">—</span>}</td>
+                          <td className="text-right text-xs opacity-70">{hasDeposit ? fmtUsd(p.depositValue ?? 0) : <span className="opacity-40">—</span>}</td>
+                          <td className="text-right pr-4">
+                            <div className="join">
+                              <button
+                                className={`btn btn-xs join-item ${dOpen ? "btn-primary" : ""}`}
+                                disabled={busy}
+                                onClick={() => togglePanel(p.reserve.symbol, "deposit")}
+                              >Deposit</button>
+                              <button
+                                className={`btn btn-xs join-item ${wOpen ? "btn-primary" : ""}`}
+                                disabled={busy || !hasDeposit}
+                                onClick={() => togglePanel(p.reserve.symbol, "withdraw")}
+                              >Withdraw</button>
+                            </div>
+                          </td>
+                        </tr>
+                        {(dOpen || wOpen) ? (
+                          <tr className="bg-base-300/40">
+                            <td colSpan={6} className="px-4 py-3">
+                              <ActionPanel
+                                title={dOpen ? `Deposit ${unit}` : `Withdraw ${unit}`}
+                                hint={dOpen
+                                  ? (isWsol ? "Native SOL is auto-wrapped before the klend deposit." : `Transfers ${unit} from your wallet into the reserve as collateral.`)
+                                  : `Withdraws ${unit} collateral and redeems the cTokens for underlying.`}
+                                inputKey={dOpen ? dKey : wKey}
+                                inputs={inputs} setInputs={setInputs}
+                                unitLabel={unit}
+                                busy={busy}
+                                onConfirm={() => void (dOpen ? handleDeposit(p.reserve) : handleWithdraw(p.reserve))}
+                                onCancel={closePanel}
+                              />
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
             {positions.every((p) => !p.depositCtokens) ? (
-              <div className="text-xs opacity-60 mt-2">No deposits yet. Use the deposit field on any row to add collateral.</div>
+              <div className="px-4 pb-3 text-xs opacity-60">No deposits yet. Click <strong>Deposit</strong> on any row to add collateral.</div>
+            ) : null}
+            {CSSOL_WT_RESERVE ? (
+              <div className="px-4 pb-3 pt-1 border-t border-base-300">
+                <button
+                  className="btn btn-xs btn-secondary w-full"
+                  disabled={busy}
+                  onClick={() => setError("Flash-unwind lives on the dedicated unwind tab — switch to it and use the leveraged-unwind card.")}
+                >⚡ Flash-loan unwind csSOL → csSOL-WT (no SOL needed to repay)</button>
+              </div>
             ) : null}
           </div>
         </div>
 
         {/* BORROWS */}
         <div className="card bg-base-200">
-          <div className="card-body p-4">
-            <div className="font-bold mb-2">Debt (borrows)</div>
-            {positions.map((p) => {
-              const r = reserves.get(p.reserve.reserve.toBase58());
-              const price = r ? sfToNumber(r.marketPriceSf) : 0;
-              const borrowedUnderlying = p.borrowAmountSf
-                ? sfToNumber(p.borrowAmountSf) / LAMPORTS_PER_SOL
-                : 0;
-              return (
-                <div key={p.reserve.symbol} className="border-t border-base-300 first:border-t-0 py-3 space-y-2">
-                  <div className="flex items-baseline justify-between">
-                    <div>
-                      <span className="font-bold">{p.reserve.symbol}</span>
-                      {p.reserve.symbol === "wSOL" ? <span className="ml-1 badge badge-xs">auto-wrap/unwrap SOL</span> : null}
-                      <span className="ml-2 text-xs opacity-60">price {fmtUsd(price)}</span>
-                    </div>
-                    <div className="text-right">
-                      <div className="font-mono">{fmt(borrowedUnderlying, 6)}</div>
-                      <div className="text-xs opacity-60">{fmtUsd(p.borrowValue ?? 0)}</div>
-                    </div>
-                  </div>
-                  <BorrowActions
-                    inputs={inputs} setInputs={setInputs} symbol={p.reserve.symbol}
-                    busy={busy}
-                    unitLabel={p.reserve.symbol === "wSOL" ? "SOL" : p.reserve.symbol}
-                    onBorrow={() => void handleBorrow(p.reserve)}
-                    onRepay={() => void handleRepay(p.reserve)}
-                  />
-                </div>
-              );
-            })}
+          <div className="card-body p-0">
+            <div className="px-4 pt-4 pb-2 flex items-baseline justify-between">
+              <span className="font-bold">Debt (borrows)</span>
+              <span className="text-xs opacity-60">{positions.filter((p) => p.borrowAmountSf).length} active</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="table table-sm">
+                <thead className="text-xs opacity-60">
+                  <tr>
+                    <th>Asset</th>
+                    <th className="text-right">Price</th>
+                    <th className="text-right">LTV</th>
+                    <th className="text-right">Borrowed</th>
+                    <th className="text-right">Value</th>
+                    <th className="text-right pr-4">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {positions.map((p) => {
+                    const r = reserves.get(p.reserve.reserve.toBase58());
+                    const price = r ? sfToNumber(r.marketPriceSf) : 0;
+                    const borrowedUnderlying = p.borrowAmountSf
+                      ? sfToNumber(p.borrowAmountSf) / LAMPORTS_PER_SOL
+                      : 0;
+                    const ltv = r?.ltvPct ?? 0;
+                    const liq = r?.liqThresholdPct ?? 0;
+                    const isWsol = p.reserve.symbol === "wSOL";
+                    const unit = isWsol ? "SOL" : p.reserve.symbol;
+                    const bKey = `${p.reserve.symbol}:borrow`;
+                    const rKey = `${p.reserve.symbol}:repay`;
+                    const bOpen = activePanel?.symbol === p.reserve.symbol && activePanel.action === "borrow";
+                    const rOpen = activePanel?.symbol === p.reserve.symbol && activePanel.action === "repay";
+                    const hasDebt = !!p.borrowAmountSf && p.borrowAmountSf > 0n;
+                    return (
+                      <Fragment key={p.reserve.symbol}>
+                        <tr className={hasDebt ? "" : "opacity-60"}>
+                          <td>
+                            <div className="font-bold">{p.reserve.symbol}</div>
+                            {isWsol ? <div className="text-[10px] opacity-50">auto-wrap/unwrap SOL</div> : null}
+                          </td>
+                          <td className="text-right font-mono text-xs">{price > 0 ? fmtUsd(price) : "—"}</td>
+                          <td className="text-right font-mono text-xs" title={`liq threshold ${liq}%`}>
+                            {ltv > 0 ? `${ltv}%` : <span className="opacity-40">—</span>}
+                          </td>
+                          <td className="text-right font-mono text-xs">{hasDebt ? fmt(borrowedUnderlying, 6) : <span className="opacity-40">—</span>}</td>
+                          <td className="text-right text-xs opacity-70">{hasDebt ? fmtUsd(p.borrowValue ?? 0) : <span className="opacity-40">—</span>}</td>
+                          <td className="text-right pr-4">
+                            <div className="join">
+                              <button
+                                className={`btn btn-xs join-item ${bOpen ? "btn-primary" : ""}`}
+                                disabled={busy}
+                                onClick={() => togglePanel(p.reserve.symbol, "borrow")}
+                              >Borrow</button>
+                              <button
+                                className={`btn btn-xs join-item ${rOpen ? "btn-primary" : ""}`}
+                                disabled={busy || !hasDebt}
+                                onClick={() => togglePanel(p.reserve.symbol, "repay")}
+                              >Repay</button>
+                            </div>
+                          </td>
+                        </tr>
+                        {(bOpen || rOpen) ? (
+                          <tr className="bg-base-300/40">
+                            <td colSpan={6} className="px-4 py-3">
+                              <ActionPanel
+                                title={bOpen ? `Borrow ${unit}` : `Repay ${unit}`}
+                                hint={bOpen
+                                  ? `Borrows ${unit} against your collateral. Subject to the reserve's LTV cap and the obligation's elevation group.`
+                                  : (isWsol ? "Native SOL is auto-wrapped before repayment; any leftover wSOL + ATA rent return as native." : `Repays ${unit} debt from your wallet.`)}
+                                inputKey={bOpen ? bKey : rKey}
+                                inputs={inputs} setInputs={setInputs}
+                                unitLabel={unit}
+                                busy={busy}
+                                onConfirm={() => void (bOpen ? handleBorrow(p.reserve) : handleRepay(p.reserve))}
+                                onCancel={closePanel}
+                              />
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
             {positions.every((p) => !p.borrowAmountSf) ? (
-              <div className="text-xs opacity-60 mt-2">No outstanding debt.</div>
+              <div className="px-4 pb-3 text-xs opacity-60">No outstanding debt.</div>
             ) : null}
           </div>
         </div>
       </div>
 
-      {log.length > 0 ? <pre className="bg-base-300 p-2 text-xs whitespace-pre-wrap rounded">{log.join("\n")}</pre> : null}
+      {/* Single transaction console — the live log of the tx in flight
+          plus any error from the last attempt, kept in one place below
+          the balance sheet (instead of scattered alerts at the top and
+          a pre block at the bottom). */}
+      <TxConsole busy={busy} log={log} error={error} onClear={() => { setLog([]); setError(null); }} />
 
       <div className="flex items-center gap-3 text-xs opacity-60">
         <span>obligation: <code>{obligation && obligation.exists ? short(obligation.obligationAddr) : "(not initialized)"}</code></span>
         <button className="btn btn-ghost btn-xs" onClick={() => void refresh()} disabled={busy}>Refresh</button>
       </div>
     </section>
+  );
+}
+
+/** Single transaction console below the balance sheet: progress lines
+ *  from the in-flight tx + the last error, side-by-side. Replaces the
+ *  scattered top-of-page alert + bottom-of-page <pre>. Shows nothing
+ *  until the user takes an action. */
+function TxConsole({ busy, log, error, onClear }: {
+  busy: boolean;
+  log: string[];
+  error: string | null;
+  onClear: () => void;
+}) {
+  if (!busy && log.length === 0 && !error) return null;
+  return (
+    <div className="card bg-base-200">
+      <div className="card-body p-3 gap-2">
+        <div className="flex items-center justify-between">
+          <div className="font-bold text-sm flex items-center gap-2">
+            {busy ? <span className="loading loading-spinner loading-xs" /> : null}
+            Transaction console
+            {error ? <span className="badge badge-error badge-sm">error</span> : busy ? <span className="badge badge-info badge-sm">running</span> : log.length > 0 ? <span className="badge badge-success badge-sm">done</span> : null}
+          </div>
+          <button className="btn btn-ghost btn-xs" disabled={busy} onClick={onClear}>Clear</button>
+        </div>
+        {log.length > 0 ? (
+          <pre className="bg-base-300 rounded p-2 text-[11px] whitespace-pre-wrap font-mono max-h-40 overflow-auto">{log.join("\n")}</pre>
+        ) : null}
+        {error ? (
+          <pre className="alert alert-error text-[11px] whitespace-pre-wrap p-2 rounded max-h-64 overflow-auto">{error}</pre>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -767,63 +964,48 @@ function Stat({ label, value, hint, warn }: { label: string; value: string; hint
   );
 }
 
-function PositionActions({
-  inputs, setInputs, symbol, busy, unitLabel,
-  onDeposit, onWithdraw, onFlashUnwind,
+/** Inline-expanded action input for a single row. Shown when the user
+ *  clicks Deposit / Withdraw / Borrow / Repay; hidden by default. The
+ *  amount string lives in the parent's `inputs` map so it survives
+ *  panel toggles (without losing what the user typed if they
+ *  accidentally close + reopen). */
+function ActionPanel({
+  title, hint, inputKey, inputs, setInputs, unitLabel, busy, onConfirm, onCancel,
 }: {
-  inputs: Record<string, string>; setInputs: (s: Record<string, string>) => void;
-  symbol: string; busy: boolean; unitLabel?: string;
-  onDeposit: () => void; onWithdraw: () => void;
-  onFlashUnwind?: () => void;
+  title: string;
+  hint?: string;
+  inputKey: string;
+  inputs: Record<string, string>;
+  setInputs: (s: Record<string, string>) => void;
+  unitLabel: string;
+  busy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
 }) {
+  const value = inputs[inputKey] ?? "";
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-      <ActionRow label="Deposit" unitLabel={unitLabel} symbol={symbol} action="deposit" inputs={inputs} setInputs={setInputs} busy={busy} onClick={onDeposit} />
-      <ActionRow label="Withdraw" unitLabel={unitLabel} symbol={symbol} action="withdraw" inputs={inputs} setInputs={setInputs} busy={busy} onClick={onWithdraw} />
-      {onFlashUnwind ? (
-        <button className="btn btn-xs btn-secondary col-span-1 sm:col-span-2" disabled={busy} onClick={onFlashUnwind}>
-          ⚡ Flash-loan unwind csSOL → csSOL-WT (no SOL needed to repay borrow)
+    <div className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between">
+        <div className="font-bold text-sm">{title}</div>
+        {hint ? <div className="text-[11px] opacity-60 max-w-md text-right">{hint}</div> : null}
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <input
+          type="number" step="0.001" min="0" placeholder="0.00"
+          className="input input-bordered input-sm w-40 font-mono"
+          value={value}
+          onChange={(e) => setInputs({ ...inputs, [inputKey]: e.target.value })}
+          disabled={busy}
+          autoFocus
+        />
+        <span className="text-xs opacity-60">{unitLabel}</span>
+        <div className="flex-1" />
+        <button className="btn btn-sm btn-ghost" disabled={busy} onClick={onCancel}>Cancel</button>
+        <button className="btn btn-sm btn-primary" disabled={busy || !value} onClick={onConfirm}>
+          {busy ? <span className="loading loading-spinner loading-xs" /> : null}
+          Confirm
         </button>
-      ) : null}
-    </div>
-  );
-}
-
-function BorrowActions({
-  inputs, setInputs, symbol, busy, unitLabel,
-  onBorrow, onRepay,
-}: {
-  inputs: Record<string, string>; setInputs: (s: Record<string, string>) => void;
-  symbol: string; busy: boolean; unitLabel?: string;
-  onBorrow: () => void; onRepay: () => void;
-}) {
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-      <ActionRow label="Borrow" unitLabel={unitLabel} symbol={symbol} action="borrow" inputs={inputs} setInputs={setInputs} busy={busy} onClick={onBorrow} />
-      <ActionRow label="Repay" unitLabel={unitLabel} symbol={symbol} action="repay" inputs={inputs} setInputs={setInputs} busy={busy} onClick={onRepay} />
-    </div>
-  );
-}
-
-function ActionRow({
-  label, symbol, action, inputs, setInputs, busy, onClick, unitLabel,
-}: {
-  label: string; symbol: string; action: string;
-  inputs: Record<string, string>; setInputs: (s: Record<string, string>) => void;
-  busy: boolean; onClick: () => void; unitLabel?: string;
-}) {
-  const key = `${symbol}:${action}`;
-  return (
-    <div className="flex items-center gap-1">
-      <input
-        type="number" step="0.001" min="0" placeholder="0.00"
-        className="input input-bordered input-xs w-20"
-        value={inputs[key] ?? ""}
-        onChange={(e) => setInputs({ ...inputs, [key]: e.target.value })}
-        disabled={busy}
-      />
-      {unitLabel ? <span className="text-xs opacity-60">{unitLabel}</span> : null}
-      <button className="btn btn-xs flex-1" disabled={busy} onClick={onClick}>{label}</button>
+      </div>
     </div>
   );
 }

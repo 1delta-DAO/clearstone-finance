@@ -21,8 +21,8 @@
   --color-clearstone:    #4F607C;
   --color-clearstone-fg: #E2E7EF;
 
-  /* type stack — single-family Geist throughout */
-  --font-display: "Geist", "Inter", ui-sans-serif, system-ui, sans-serif;
+  /* type stack — Manrope for the brand wordmark / display, Geist for UI body */
+  --font-display: "Manrope", "Geist", "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-sans:    "Geist", "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono:    "Geist Mono", ui-monospace, "SF Mono", "JetBrains Mono", monospace;
 
@@ -91,22 +91,22 @@ body {
   color: var(--color-base-content);
 }
 
-/* Display / wordmark — single-family Geist, differentiated by weight + tracking.
-   - clearstone: semibold, tight tracking
-   - fusion:     light, generous tracking, lowercase — quiet companion */
+/* Display / wordmark — Manrope at thin weights for elegance.
+   - clearstone: light, slightly tight tracking
+   - fusion:     extralight, generous tracking, lowercase */
 .font-display {
   font-family: var(--font-display);
-  letter-spacing: -0.014em;
+  letter-spacing: -0.005em;
 }
 .brand-wordmark {
   font-family: var(--font-display);
-  font-weight: 600;
-  letter-spacing: -0.022em;
+  font-weight: 300;
+  letter-spacing: -0.008em;
 }
 .brand-wordmark-thin {
   font-family: var(--font-display);
-  font-weight: 300;
-  letter-spacing: 0.16em;
+  font-weight: 200;
+  letter-spacing: 0.22em;
   text-transform: lowercase;
 }
 

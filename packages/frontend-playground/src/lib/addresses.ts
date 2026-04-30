@@ -46,14 +46,19 @@ export const POOL_VRT_ATA = new PublicKey(
 export const KLEND_PROGRAM = new PublicKey(
   import.meta.env.VITE_KLEND_PROGRAM ?? "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD",
 );
+// v2 unified market — bootstrapped via scripts/bootstrap-cssol-market-v2.ts
+// (the v1 market `2gRy7f…heyejW` is locked due to klend's reserve_config
+// validation lockout once group 1 was registered; v2 has all 5 reserves
+// (csSOL, wSOL, csSOL-WT, deUSX, sUSDC) plus both elevation groups
+// (1 = stables, 2 = LST/SOL) configured cleanly).
 export const KLEND_MARKET = new PublicKey(
-  import.meta.env.VITE_KLEND_MARKET ?? "2gRy7fYaPe8ooB1HqTfa2sJeJZ8KdVebhj88tgShyejW",
+  import.meta.env.VITE_KLEND_MARKET ?? "En6zW3ne2rf7jWZt7tCs98ixUvEqLM4siAuuigtTiDSi",
 );
 export const CSSOL_RESERVE = new PublicKey(
-  import.meta.env.VITE_CSSOL_RESERVE ?? "Ez1axBhD6M6t1Zmzfz8MQ95Kmuc48BuoYhQEEHEhT4U1",
+  import.meta.env.VITE_CSSOL_RESERVE ?? "ARL4xwastet7NPaedBJRsPnHtHmQDzuqXa6FjD2Uny8s",
 );
 export const WSOL_RESERVE = new PublicKey(
-  import.meta.env.VITE_WSOL_RESERVE ?? "4RvKrQVTdgvGEf75yvZE9JwzG4rZJrbstNcvVoXrkZ8o",
+  import.meta.env.VITE_WSOL_RESERVE ?? "F1HhwbkAihXwVx8KNLz6WhNdcGAPbr7NKKsdHqQGXdk4",
 );
 // Oracle accounts read by klend's RefreshReserve. The csSOL oracle is the
 // accrual-oracle output account (pythConfiguration.price), which itself is
@@ -88,5 +93,5 @@ export const POOL_PENDING_WSOL_ACCOUNT: PublicKey | null = _poolPendingWsol ? ne
 // csSOL-WT klend reserve — set after running scripts/setup-cssol-wt-reserve.ts.
 // Required by the leveraged-unwind flash-loan path; the v0 unwind tab still
 // works without it.
-const _cssolWtReserve = import.meta.env.VITE_CSSOL_WT_RESERVE;
+const _cssolWtReserve = import.meta.env.VITE_CSSOL_WT_RESERVE ?? "FHDGQyNFHurXKPHPBBC1b3orGSuJqkdpgz9vwr9pHfQU";
 export const CSSOL_WT_RESERVE: PublicKey | null = _cssolWtReserve ? new PublicKey(_cssolWtReserve) : null;

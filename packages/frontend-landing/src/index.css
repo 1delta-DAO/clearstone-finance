@@ -87,6 +87,67 @@ body {
   to   { transform: rotate(360deg) translateZ(0); }
 }
 
+/* Light-themed hero (the "head of the page" with strong logo contrast) */
+.bg-stone-page-light {
+  background: linear-gradient(180deg, #FBFCFD 0%, #EEF1F5 100%);
+}
+
+.hero-mesh-light {
+  background:
+    radial-gradient(40% 35% at 22% 28%, rgba(166,179,197,0.42) 0%, rgba(166,179,197,0) 70%),
+    radial-gradient(48% 42% at 78% 24%, rgba(124,139,163,0.26) 0%, rgba(124,139,163,0) 70%),
+    radial-gradient(55% 50% at 50% 78%, rgba(197,207,220,0.55) 0%, rgba(197,207,220,0) 78%);
+  animation: mesh-drift 24s ease-in-out infinite alternate;
+  will-change: transform;
+  transform: translateZ(0);
+}
+
+.hero-conic-light {
+  position: absolute;
+  width: 720px; height: 720px;
+  left: 50%; top: 50%;
+  margin-left: -360px; margin-top: -360px;
+  background: conic-gradient(
+    from 0deg,
+    rgba(124,139,163,0)    0deg,
+    rgba(166,179,197,0.18) 90deg,
+    rgba(124,139,163,0)    220deg,
+    rgba(124,139,163,0)    360deg
+  );
+  border-radius: 50%;
+  filter: blur(14px);
+  animation: conic-spin 32s linear infinite;
+  will-change: transform;
+  transform: translateZ(0);
+}
+
+.hero-halo-light {
+  position: absolute;
+  width: 420px; height: 420px;
+  border-radius: 50%;
+  background: radial-gradient(50% 50% at 50% 55%,
+    rgba(31,45,72,0.10) 0%,
+    rgba(31,45,72,0.04) 35%,
+    rgba(31,45,72,0)    72%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Light-bg variant of the ghost CTA */
+.btn-ghost-cs-light {
+  background: transparent;
+  color: #1F2D48;
+  border: 1px solid rgba(31,45,72,0.28);
+  border-radius: 999px;
+  padding: 0.85rem 1.6rem;
+  font-weight: 500;
+  transition: background .2s, border-color .2s;
+}
+.btn-ghost-cs-light:hover {
+  background: rgba(31,45,72,0.06);
+  border-color: rgba(31,45,72,0.55);
+}
+
 /* Logo tilt — driven by --px-x / --px-y CSS variables set by an rAF
    lerp loop. No CSS transition (the lerp is the smoothing) so cursor
    tracking feels organic, not laggy. */

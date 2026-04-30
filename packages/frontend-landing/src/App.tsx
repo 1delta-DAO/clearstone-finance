@@ -59,20 +59,20 @@ function Eyebrow({ children, dark = false }: { children: React.ReactNode; dark?:
 /* ---- Top Nav ------------------------------------------------- */
 function Nav() {
   return (
-    <nav className="fixed top-0 left-0 right-0 z-30 bg-[#070D1F]/92 border-b border-white/5">
+    <nav className="fixed top-0 left-0 right-0 z-30 bg-[#F7F8FA]/95 border-b border-[#DCE2EC]">
       <div className="max-w-6xl mx-auto px-6 md:px-10 h-16 flex items-center justify-between">
         <a href="#top" className="flex items-center gap-3">
           <img src={logo} alt="Clearstone Fusion" className="h-7 w-auto" />
           <div className="flex items-baseline gap-1.5 font-display">
-            <span className="brand-wordmark text-base text-stone-0">clearstone</span>
-            <span className="brand-wordmark-thin text-xs text-stone-3">fusion</span>
+            <span className="brand-wordmark text-base text-[#1F2D48]">clearstone</span>
+            <span className="brand-wordmark-thin text-xs text-[#7C8BA3]">fusion</span>
           </div>
         </a>
-        <div className="hidden md:flex items-center gap-7 text-sm text-stone-2">
-          <a href="#solution" className="hover:text-stone-0 transition-colors">Platform</a>
-          <a href="#surfaces" className="hover:text-stone-0 transition-colors">Products</a>
-          <a href="#stack" className="hover:text-stone-0 transition-colors">Architecture</a>
-          <a href="#compliance" className="hover:text-stone-0 transition-colors">Compliance</a>
+        <div className="hidden md:flex items-center gap-7 text-sm text-[#4F607C]">
+          <a href="#solution"   className="hover:text-[#1F2D48] transition-colors">Platform</a>
+          <a href="#surfaces"   className="hover:text-[#1F2D48] transition-colors">Products</a>
+          <a href="#stack"      className="hover:text-[#1F2D48] transition-colors">Architecture</a>
+          <a href="#compliance" className="hover:text-[#1F2D48] transition-colors">Compliance</a>
         </div>
         <a href="#cta" className="btn-primary-cs text-sm">Book a demo</a>
       </div>
@@ -148,19 +148,19 @@ function Hero() {
     <section
       ref={heroRef}
       id="top"
-      className="relative min-h-[100svh] flex items-center justify-center overflow-hidden"
+      className="relative min-h-[100svh] flex items-center justify-center overflow-hidden bg-stone-page-light"
     >
-      {/* Mesh gradient — 3 drifting radial blobs */}
-      <div className="absolute inset-0 hero-mesh pointer-events-none" />
+      {/* Mesh gradient — light variant for the white hero */}
+      <div className="absolute inset-0 hero-mesh-light pointer-events-none" />
 
-      {/* Slow orbital conic sweep behind the logo */}
-      <div className="absolute hero-conic pointer-events-none" />
+      {/* Slow orbital conic sweep — light variant */}
+      <div className="absolute hero-conic-light pointer-events-none" />
 
-      {/* Faint vector grid */}
-      <svg className="absolute inset-0 w-full h-full opacity-[0.04] pointer-events-none" xmlns="http://www.w3.org/2000/svg">
+      {/* Faint vector grid (dark stroke for light bg) */}
+      <svg className="absolute inset-0 w-full h-full opacity-[0.06] pointer-events-none" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <pattern id="g" width="56" height="56" patternUnits="userSpaceOnUse">
-            <path d="M 56 0 L 0 0 0 56" fill="none" stroke="#A6B3C5" strokeWidth="0.5" />
+            <path d="M 56 0 L 0 0 0 56" fill="none" stroke="#1F2D48" strokeWidth="0.5" />
           </pattern>
         </defs>
         <rect width="100%" height="100%" fill="url(#g)" />
@@ -168,19 +168,18 @@ function Hero() {
 
       {/* Hero content (no whole-block parallax — only the logo tilts) */}
       <div className="relative max-w-4xl mx-auto px-6 text-center">
-        {/* Logo with subtle 3D tilt driven by --px-x / --px-y */}
+        {/* Logo with subtle 3D tilt — no shadow, sits clean on the light bg */}
         <div className="hero-logo-wrap relative inline-flex items-center justify-center mb-10">
-          <div className="hero-halo" aria-hidden />
           <img
             src={logo}
             alt=""
-            className="relative z-10 h-44 md:h-56 w-auto drop-shadow-[0_24px_50px_rgba(7,13,31,0.7)] hero-float"
+            className="relative z-10 h-44 md:h-56 w-auto hero-float"
           />
         </div>
 
         {/* Wordmark — letter-by-letter mount-in */}
         <div className="font-display flex items-baseline justify-center gap-3 md:gap-4 mb-7">
-          <span className="brand-wordmark text-5xl md:text-7xl text-stone-0">
+          <span className="brand-wordmark text-5xl md:text-7xl text-[#1F2D48]">
             {wordmark.map((c, i) => (
               <span
                 key={i}
@@ -191,12 +190,12 @@ function Hero() {
               </span>
             ))}
           </span>
-          <span className="brand-wordmark-thin text-2xl md:text-3xl text-stone-2 hero-fusion">
+          <span className="brand-wordmark-thin text-2xl md:text-3xl text-[#7C8BA3] hero-fusion">
             fusion
           </span>
         </div>
 
-        <p className="hero-tag text-lg md:text-xl text-stone-2 max-w-2xl mx-auto leading-relaxed">
+        <p className="hero-tag text-lg md:text-xl text-[#4F607C] max-w-2xl mx-auto leading-relaxed">
           Institutional DeFi infrastructure. Software, programs, and rails that let banks,
           fintechs, and asset managers stand up KYC-gated savings apps and trading desks —
           running on permissionless liquidity underneath.
@@ -204,15 +203,15 @@ function Hero() {
 
         <div className="hero-cta flex flex-col md:flex-row gap-3 md:gap-4 justify-center mt-10">
           <a href="#cta" className="btn-primary-cs btn-shimmer">Book a demo</a>
-          <a href="#solution" className="btn-ghost-cs">See the architecture ↓</a>
+          <a href="#solution" className="btn-ghost-cs-light">See the architecture ↓</a>
         </div>
       </div>
 
-      {/* Scroll cue */}
+      {/* Scroll cue (dark on light bg) */}
       <div className="absolute bottom-10 left-0 right-0 flex justify-center pointer-events-none">
-        <div className="flex flex-col items-center gap-2 text-stone-3">
+        <div className="flex flex-col items-center gap-2 text-[#7C8BA3]">
           <span className="text-[10px] tracking-[0.32em] uppercase">scroll</span>
-          <span className="hero-scroll-dot block h-7 w-px bg-gradient-to-b from-stone-3/80 to-transparent" />
+          <span className="hero-scroll-dot block h-7 w-px bg-gradient-to-b from-[#7C8BA3]/80 to-transparent" />
         </div>
       </div>
     </section>
