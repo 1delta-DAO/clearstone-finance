@@ -34,6 +34,7 @@ import {
 } from "../lib/addresses";
 import { obligationPda, userMetadataPda } from "../lib/klend";
 import { readVaultState } from "../lib/jitoVault";
+import CreditTradeEusxPanel from "./CreditTradeEusxPanel";
 import {
   buildCloseStep1ConvertIxes,
   buildCloseStep2UnwindIxes,
@@ -66,8 +67,8 @@ function fmtUsd(n: number): string {
 
 type Pair = "csSOL/wSOL" | "ceUSX/sUSDC";
 const PAIRS: { id: Pair; label: string; active: boolean }[] = [
-  { id: "csSOL/wSOL", label: "csSOL / wSOL credit trade", active: true },
-  { id: "ceUSX/sUSDC", label: "ceUSX / sUSDC credit trade (coming v2)", active: false },
+  { id: "csSOL/wSOL", label: "csSOL / wSOL — atomic 1-tx leveraged loop", active: true },
+  { id: "ceUSX/sUSDC", label: "ceUSX / sUSDC — manual deposit + borrow", active: true },
 ];
 
 export default function CreditTradeTab() {
@@ -513,14 +514,25 @@ export default function CreditTradeTab() {
       <header>
         <h2 className="text-2xl font-bold">Credit trade</h2>
         <p className="opacity-70 mt-1 text-sm">
-          One-tx leveraged position: flash-borrow wSOL → wrap (margin + loan)
-          via Jito vault → deposit csSOL collateral → borrow wSOL → flash-repay.
-          Target eMode 2 (90% LTV / 92% liq). Margin can be SOL, wSOL, or csSOL.
+          {pair === "csSOL/wSOL" ? (
+            <>One-tx leveraged position: flash-borrow wSOL → wrap (margin + loan)
+            via Jito vault → deposit csSOL collateral → borrow wSOL → flash-repay.
+            Target eMode 2 (90% LTV / 92% liq). Margin can be SOL, wSOL, or csSOL.</>
+          ) : (
+            <>Manual deposit + borrow against ceUSX collateral / sUSDC debt in
+            klend's Stables eMode (group 1, 90% LTV / 92% liq). Atomic 1-tx
+            looping is impossible because Solstice gates USX <code>RequestMint</code> /
+            <code>RequestRedeem</code> behind an operator multisig, so the
+            sUSDC↔USX hop cannot be CPI'd from a user-signed tx.</>
+          )}
         </p>
       </header>
 
-      {/* KYC banner — credit-trade open path mints csSOL via delta-mint */}
-      {whitelisted === false ? (
+      {/* KYC banner — only relevant for the csSOL pair (the
+          credit-trade open path mints csSOL via delta-mint). The ceUSX
+          pair has its own KYC story (Solstice institutional onboarding)
+          surfaced inside CreditTradeEusxPanel. */}
+      {pair === "csSOL/wSOL" && whitelisted === false ? (
         <div className="alert alert-warning text-sm">
           <span>
             <strong>Wallet not whitelisted.</strong> The credit-trade open
@@ -532,7 +544,7 @@ export default function CreditTradeTab() {
             {whitelistPda ? <> PDA: <code className="text-xs">{whitelistPda.toBase58().slice(0, 6)}…{whitelistPda.toBase58().slice(-4)}</code></> : null}
           </span>
         </div>
-      ) : whitelisted === true ? (
+      ) : pair === "csSOL/wSOL" && whitelisted === true ? (
         <div className="text-xs opacity-60 flex items-center gap-2">
           <span className="badge badge-success badge-sm">whitelisted</span>
           <span>csSOL pool Holder role active.</span>
@@ -557,6 +569,17 @@ export default function CreditTradeTab() {
           </div>
         </div>
       </div>
+
+      {/* ceUSX / sUSDC — manual deposit + borrow flow. Atomic loop is
+          impossible because Solstice's USX program gates RequestMint /
+          RequestRedeem behind their operator multisig; see
+          CreditTradeEusxPanel.tsx for the full UI + handlers. */}
+      {pair === "ceUSX/sUSDC" ? <CreditTradeEusxPanel /> : null}
+
+      {/* csSOL / wSOL — atomic 1-tx leveraged loop via flash_borrow +
+          wrap_with_jito_vault + deposit + request_elevation_group +
+          borrow + flash_repay. Everything below this line is csSOL-specific. */}
+      {pair === "csSOL/wSOL" ? (<>
 
       {/* Pool liquidity — the open path's hard ceiling. The wSOL
           reserve's available_amount is consumed twice within one tx
@@ -887,6 +910,8 @@ export default function CreditTradeTab() {
         Pair: csSOL / wSOL · csSOL price: {fmtUsd(csSolPrice)} · wSOL price: {fmtUsd(wsolPrice)} ·
         v3 market · eMode 2 (90% LTV / 92% liq) · flash fee 0
       </div>
+
+      </>) : null}
     </section>
   );
 }

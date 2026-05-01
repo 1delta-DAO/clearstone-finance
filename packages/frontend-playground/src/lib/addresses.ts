@@ -92,6 +92,34 @@ export const WSOL_RESERVE_ORACLE = new PublicKey(
 );
 export const ELEVATION_GROUP_LST_SOL = 2;
 
+// Stables eMode (group 1): ceUSX collateral, sUSDC debt. The atomic
+// flash-loan loop is blocked by Solstice's Squads-gated USX RequestMint /
+// RequestRedeem — every USX-program ix requires the operator's multisig
+// as signer, so user-signed CPIs into `usxTTTg…uwBD` mid-tx are
+// impossible. This pair is exposed as a manual deposit + borrow flow on
+// the credit-trade tab; users mint USX via the institutional portal once,
+// wrap to ceUSX, then leverage by repeating deposit / borrow / repay /
+// withdraw against the v3 market.
+export const CEUSX_MINT = new PublicKey(
+  import.meta.env.VITE_CEUSX_MINT ?? "8Uy7rmtAZvnQA1SuYZJKKBXFovHDPEYXiYH3H6iQMRwT",
+);
+export const CEUSX_RESERVE = new PublicKey(
+  import.meta.env.VITE_CEUSX_RESERVE ?? "88XHsosaqq3bV9MW3gLtn3RozHuVKnvRcSbEq8fPcmXU",
+);
+export const CEUSX_RESERVE_ORACLE = new PublicKey(
+  import.meta.env.VITE_CEUSX_RESERVE_ORACLE ?? "3L8kkp8G6gxBmr7wdYJxvofEWxtUtUUAGJSokSLwzmyW",
+);
+export const SUSDC_MINT = new PublicKey(
+  import.meta.env.VITE_SUSDC_MINT ?? "8iBux2LRja1PhVZph8Rw4Hi45pgkaufNEiaZma5nTD5g",
+);
+export const SUSDC_RESERVE = new PublicKey(
+  import.meta.env.VITE_SUSDC_RESERVE ?? "78kkPNAjS7pq9yk59spMGKYcFLAA3m2xHvNBokk8BFy9",
+);
+export const SUSDC_RESERVE_ORACLE = new PublicKey(
+  import.meta.env.VITE_SUSDC_RESERVE_ORACLE ?? "ETLQGfwHVfCYSqEG51ckf6h581e3k5CyoMnfz2WW45eD",
+);
+export const ELEVATION_GROUP_STABLES = 1;
+
 // Address Lookup Table that compresses the static account set used by the
 // merged 1-signature deposit flow (init+ATAs+wrap+klend+elevation). Created
 // once via packages/programs/scripts/init-deposit-lut.ts. Allow `null` so
